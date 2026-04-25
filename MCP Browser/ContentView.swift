@@ -86,6 +86,9 @@ struct ContentView: View {
         .onChange(of: vm.browser?.urlString ?? "") { _, new in
             if !urlFieldFocused { vm.urlField = new }
         }
+        .onChange(of: vm.focusURLToken) { _, _ in
+            urlFieldFocused = true
+        }
         .toolbar {
             navigationGroup(vm: vm)
             urlBarItem(vm: vm)
