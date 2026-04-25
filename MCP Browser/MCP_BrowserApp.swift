@@ -2,31 +2,52 @@
 //  MCP_BrowserApp.swift
 //  MCP Browser
 //
-//  Created by Ben Milford on 23/04/2026.
+//  App entry point. Each window owns its own BrowserWindow. The
+//  MCPCoordinator routes tool calls to the focused window's active
+//  tab and holds the shared AgentSettings / ActionLog / Recorder.
 //
 
 import SwiftUI
-import SwiftData
 
 @main
 struct MCP_BrowserApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    @State private var agentSettings: AgentSettings
+    @State private var actionLog: ActionLog
+    @State private var recorder: Recorder
+    @State private var coordinator: MCPCoordinator
+    @State private var bookmarks = BookmarkStore()
+    @State private var history = HistoryStore()
+    @State private var favicons = FaviconService()
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    init() {
+        let settings = AgentSettings()
+        let log = ActionLog()
+        let rec = Recorder()
+        let presenter = DefaultBrowserPresenter()
+        _agentSettings = State(initialValue: settings)
+        _actionLog = State(initialValue: log)
+        _recorder = State(initialValue: rec)
+        _coordinator = State(initialValue: MCPCoordinator(
+            agentSettings: settings,
+            actionLog: log,
+            recorder: rec,
+            presenter: presenter
+        ))
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(coordinator)
+                .environment(bookmarks)
+                .environment(history)
+                .environment(agentSettings)
+                .environment(actionLog)
+                .environment(recorder)
+                .environment(favicons)
         }
-        .modelContainer(sharedModelContainer)
+        .windowResizability(.contentSize)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .commands { AppCommands() }
     }
 }
