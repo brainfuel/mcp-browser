@@ -346,6 +346,31 @@ extension BrowserTab: WKUIDelegate {
         }
         return nil
     }
+
+    /// Camera / microphone permission prompt. Forwarded to the
+    /// presenter so the model layer doesn't import AppKit dialog code.
+    func webView(_ webView: WKWebView,
+                 requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        guard let presenter else {
+            decisionHandler(.prompt)
+            return
+        }
+        let wantsCamera = (type == .camera || type == .cameraAndMicrophone)
+        let wantsMic    = (type == .microphone || type == .cameraAndMicrophone)
+        let host = origin.host
+        Task { @MainActor in
+            switch await presenter.requestMediaCapture(
+                host: host, wantsCamera: wantsCamera, wantsMicrophone: wantsMic
+            ) {
+            case .grant:  decisionHandler(.grant)
+            case .deny:   decisionHandler(.deny)
+            case .prompt: decisionHandler(.prompt)
+            }
+        }
+    }
 }
 
 // MARK: - Script message bridge
