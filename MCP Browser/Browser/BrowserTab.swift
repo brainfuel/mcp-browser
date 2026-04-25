@@ -260,6 +260,56 @@ enum BrowserError: LocalizedError {
 
 extension BrowserTab: WKNavigationDelegate {
 
+    /// HTTP Basic / Digest / NTLM credential prompt. Server-trust and
+    /// client-cert challenges fall back to the system default — TLS
+    /// pinning and identity selection are out of scope for this batch.
+    func webView(_ webView: WKWebView,
+                 didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let method = challenge.protectionSpace.authenticationMethod
+        let credentialMethods: Set<String> = [
+            NSURLAuthenticationMethodHTTPBasic,
+            NSURLAuthenticationMethodHTTPDigest,
+            NSURLAuthenticationMethodNTLM,
+        ]
+        guard credentialMethods.contains(method), let presenter else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        let host = challenge.protectionSpace.host
+        let realm = challenge.protectionSpace.realm ?? ""
+        let isProxy = challenge.protectionSpace.isProxy()
+        Task { @MainActor in
+            if let credential = await presenter.requestHTTPCredential(
+                host: host, realm: realm, isProxy: isProxy
+            ) {
+                completionHandler(.useCredential, credential)
+            } else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+            }
+        }
+    }
+
+    /// Hand non-web schemes (mailto:, tel:, sms:, facetime:, app deep
+    /// links, etc.) to the system so the OS can route them to the right
+    /// handler. Plain http/https stays in WebKit. `about:` and `data:`
+    /// are kept too — they're frequently used by the engine itself.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url, let scheme = url.scheme?.lowercased() else {
+            decisionHandler(.allow)
+            return
+        }
+        let webSchemes: Set<String> = ["http", "https", "about", "data", "blob", "file"]
+        if webSchemes.contains(scheme) {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(.cancel)
+        NSWorkspace.shared.open(url)
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // Refresh per-page agent state so the sensitive-submit script
         // and recorder gate have the current values when the page
