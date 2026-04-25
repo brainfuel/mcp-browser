@@ -25,6 +25,12 @@ final class BrowserWindow {
     /// The tab currently visible and targeted by MCP tools.
     var activeID: UUID?
 
+    /// LIFO of recently-closed tabs' URLs. ⌘⇧T pops one and opens a
+    /// fresh tab pointed at the same address. Capped to keep the stack
+    /// from growing without bound.
+    private var closedURLStack: [String] = []
+    private let closedStackLimit = 32
+
     var active: BrowserTab? {
         tabs.first(where: { $0.id == activeID }) ?? tabs.first
     }
@@ -80,11 +86,37 @@ final class BrowserWindow {
             return false
         }
         let wasActive = (activeID == id)
+        let url = tabs[idx].currentURL?.absoluteString ?? ""
         tabs.remove(at: idx)
+        if !url.isEmpty {
+            closedURLStack.append(url)
+            if closedURLStack.count > closedStackLimit {
+                closedURLStack.removeFirst(closedURLStack.count - closedStackLimit)
+            }
+        }
         if wasActive {
             let next = min(idx, tabs.count - 1)
             activeID = tabs[next].id
         }
+        return true
+    }
+
+    /// Pop the most recently closed tab's URL and open it in a fresh
+    /// tab. No-op if the stack is empty.
+    @discardableResult
+    func reopenLastClosed() -> BrowserTab? {
+        guard let url = closedURLStack.popLast() else { return nil }
+        return newTab(url: url)
+    }
+
+    var hasReopenableTab: Bool { !closedURLStack.isEmpty }
+
+    /// Activate the tab at `index` (0-based). Returns false if out of
+    /// range. Used by ⌘1–⌘9.
+    @discardableResult
+    func switchTab(at index: Int) -> Bool {
+        guard tabs.indices.contains(index) else { return false }
+        activeID = tabs[index].id
         return true
     }
 

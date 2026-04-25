@@ -39,14 +39,9 @@ struct BookmarksBarView: View {
     @Environment(BrowserTab.self) private var browser
 
     @State private var isBarTargeted = false
-    @State private var visibleCount: Int = .max
 
     var body: some View {
         let nodes = store.barChildren
-        let clampedVisible = min(max(visibleCount, 0), nodes.count)
-        let hidden = clampedVisible < nodes.count
-            ? Array(nodes.suffix(nodes.count - clampedVisible))
-            : []
 
         Group {
             if nodes.isEmpty {
@@ -60,18 +55,11 @@ struct BookmarksBarView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
             } else {
-                BarOverflowLayout(
-                    spacing: 4,
-                    currentVisible: visibleCount,
-                    onVisibleCountChange: { newCount in
-                        if newCount != visibleCount { visibleCount = newCount }
-                    }
-                ) {
+                BarOverflowLayout(spacing: 4) {
                     ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
                         BookmarksBarNodeView(node: node, index: index)
-                            .transition(.scale.combined(with: .opacity))
                     }
-                    BarOverflowMenu(hidden: hidden)
+                    BarOverflowMenu(allNodes: nodes)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -109,37 +97,20 @@ struct BookmarksBarView: View {
 /// when placed it takes the trailing slot (Safari-style chevron).
 private struct BarOverflowLayout: Layout {
     var spacing: CGFloat
-    /// Current `visibleCount` from the parent's @State. Used to dedupe
-    /// reports — without this, every fresh cache (which resets every
-    /// layout cycle) would dispatch a redundant "change" with the value
-    /// state already holds, repeatedly invalidating the parent.
-    var currentVisible: Int
-    var onVisibleCountChange: (Int) -> Void
 
-    struct CacheData {
-        var visible: Int = 0
-    }
-
-    func makeCache(subviews: Subviews) -> CacheData { CacheData() }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
-        let (vis, used, h) = compute(subviews: subviews, width: width)
-        cache.visible = vis
+        let (_, used, h) = compute(subviews: subviews, width: width)
         return CGSize(width: min(used, width), height: h)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count > 0 else { return }
         let items = subviews.dropLast()
         let overflow = subviews[subviews.count - 1]
         // Compute against actual bounds — `sizeThatFits` may have been
         // called with `.infinity` proposals which can't drive placement.
         let (computedVisible, _, _) = compute(subviews: subviews, width: bounds.width)
-        cache.visible = computedVisible
-        if computedVisible != currentVisible {
-            DispatchQueue.main.async { onVisibleCountChange(computedVisible) }
-        }
         let visible = min(computedVisible, items.count)
         let hiddenCount = items.count - visible
         var x = bounds.minX
@@ -215,24 +186,22 @@ private struct BarOverflowMenu: View {
     @Environment(BookmarkStore.self) private var store
     @Environment(BrowserTab.self) private var browser
 
-    let hidden: [BookmarkNode]
+    let allNodes: [BookmarkNode]
 
     var body: some View {
         // SwiftUI's Menu flashes here and logs AppKit item-view
         // mismatches while the overflow contents are being presented.
-        // Drive the chevron with a small NSButton + NSMenu instead so
-        // AppKit owns the menu lifecycle end-to-end.
-        BarOverflowMenuButton(hidden: hidden, store: store, browser: browser)
+        // Drive the chevron with a tiny AppKit control instead so the
+        // icon's rendering stays stable while AppKit owns the menu
+        // lifecycle end-to-end.
+        BarOverflowMenuButton(allNodes: allNodes, store: store, browser: browser)
             .frame(width: 24, height: 22)
-        .opacity(hidden.isEmpty ? 0 : 1)
-        .allowsHitTesting(!hidden.isEmpty)
-        .help("More bookmarks")
     }
 }
 
 @MainActor
 private struct BarOverflowMenuButton: NSViewRepresentable {
-    let hidden: [BookmarkNode]
+    let allNodes: [BookmarkNode]
     let store: BookmarkStore
     let browser: BrowserTab
 
@@ -240,41 +209,53 @@ private struct BarOverflowMenuButton: NSViewRepresentable {
         Coordinator(store: store, browser: browser)
     }
 
-    func makeNSView(context: Context) -> OverflowChevronButton {
-        let button = OverflowChevronButton()
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.showMenu(_:))
-        context.coordinator.button = button
-        context.coordinator.updateMenu(hidden: hidden)
-        return button
+    func makeNSView(context: Context) -> OverflowChevronControl {
+        let control = OverflowChevronControl()
+        control.onClick = { [weak coordinator = context.coordinator] sender in
+            coordinator?.showMenu(from: sender)
+        }
+        context.coordinator.control = control
+        context.coordinator.updateMenu(allNodes: allNodes)
+        control.toolTip = "All bookmarks"
+        return control
     }
 
-    func updateNSView(_ button: OverflowChevronButton, context: Context) {
+    func updateNSView(_ control: OverflowChevronControl, context: Context) {
         context.coordinator.store = store
         context.coordinator.browser = browser
-        context.coordinator.button = button
-        context.coordinator.updateMenu(hidden: hidden)
-        button.isEnabled = !hidden.isEmpty
-        button.toolTip = hidden.isEmpty ? nil : "More bookmarks"
+        context.coordinator.control = control
+        context.coordinator.updateMenu(allNodes: allNodes)
     }
 
-    final class Coordinator: NSObject {
-        weak var button: NSButton?
+    final class Coordinator: NSObject, NSMenuDelegate {
+        weak var control: OverflowChevronControl?
         var store: BookmarkStore
         var browser: BrowserTab
+        private var lastNodes: [BookmarkNode] = []
+        private var pendingNodes: [BookmarkNode]?
+        private var isMenuOpen = false
+        private var currentMenu: NSMenu?
 
         init(store: BookmarkStore, browser: BrowserTab) {
             self.store = store
             self.browser = browser
         }
 
-        func updateMenu(hidden: [BookmarkNode]) {
+        func updateMenu(allNodes: [BookmarkNode]) {
+            guard allNodes != lastNodes || currentMenu == nil else { return }
+            guard !isMenuOpen else {
+                pendingNodes = allNodes
+                return
+            }
+
             let menu = NSMenu()
             menu.autoenablesItems = false
-            for node in hidden {
+            menu.delegate = self
+            for node in allNodes {
                 menu.addItem(makeItem(for: node))
             }
-            button?.menu = menu
+            currentMenu = menu
+            lastNodes = allNodes
         }
 
         private func makeItem(for node: BookmarkNode) -> NSMenuItem {
@@ -317,10 +298,22 @@ private struct BarOverflowMenuButton: NSViewRepresentable {
             browser.navigate(to: url)
         }
 
-        @objc func showMenu(_ sender: NSButton) {
-            guard let menu = sender.menu, menu.items.isEmpty == false else { return }
+        func showMenu(from sender: OverflowChevronControl) {
+            guard let menu = currentMenu, menu.items.isEmpty == false else { return }
             let point = NSPoint(x: 0, y: sender.bounds.maxY + 2)
             menu.popUp(positioning: nil, at: point, in: sender)
+        }
+
+        func menuWillOpen(_ menu: NSMenu) {
+            isMenuOpen = true
+        }
+
+        func menuDidClose(_ menu: NSMenu) {
+            isMenuOpen = false
+            if let pendingNodes {
+                self.pendingNodes = nil
+                updateMenu(allNodes: pendingNodes)
+            }
         }
 
         private func displayTitle(for bookmark: Bookmark) -> String {
@@ -331,22 +324,33 @@ private struct BarOverflowMenuButton: NSViewRepresentable {
     }
 }
 
-private final class OverflowChevronButton: NSButton {
+private final class OverflowChevronControl: NSView {
+    var onClick: ((OverflowChevronControl) -> Void)?
+    private let imageView = NSImageView()
+    private var tracking: NSTrackingArea?
+    private var isHovering = false {
+        didSet { updateAppearance() }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        isBordered = false
-        title = ""
-        image = NSImage(systemSymbolName: "chevron.right.2", accessibilityDescription: "More bookmarks")
-        imagePosition = .imageOnly
-        imageScaling = .scaleProportionallyDown
-        contentTintColor = .secondaryLabelColor
-        focusRingType = .none
-        bezelStyle = .shadowlessSquare
-        setButtonType(.momentaryChange)
-        translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.backgroundColor = NSColor.clear.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.image = NSImage(
+            systemSymbolName: "chevron.right.2",
+            accessibilityDescription: "More bookmarks"
+        )
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.contentTintColor = .secondaryLabelColor
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
     }
 
     @available(*, unavailable)
@@ -358,12 +362,46 @@ private final class OverflowChevronButton: NSButton {
         NSSize(width: 24, height: 22)
     }
 
-    override var isHighlighted: Bool {
-        didSet {
-            layer?.backgroundColor = isHighlighted
-                ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18).cgColor
-                : NSColor.clear.cgColor
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking {
+            removeTrackingArea(tracking)
         }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?(self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAppearance()
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor = isHovering
+            ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18).cgColor
+            : NSColor.clear.cgColor
     }
 }
 

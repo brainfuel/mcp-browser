@@ -26,6 +26,8 @@ struct SettingsView: View {
                     .tabItem { Label("Bookmarks", systemImage: "book") }
                 AgentSettingsSectionView()
                     .tabItem { Label("Agent", systemImage: "cursorarrow.rays") }
+                PrivacySettingsView()
+                    .tabItem { Label("Privacy", systemImage: "hand.raised") }
                 RecorderSettingsView(endpoint: Self.endpoint)
                     .tabItem { Label("Recorder", systemImage: "record.circle") }
                 ActionLogSettingsView(endpoint: Self.endpoint)
@@ -54,4 +56,5 @@ struct SettingsView: View {
         .environment(AgentSettings())
         .environment(ActionLog())
         .environment(BookmarkStore())
+        .environment(HistoryStore())
 }

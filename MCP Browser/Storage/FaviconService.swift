@@ -25,6 +25,14 @@ final class FaviconService {
     @ObservationIgnored
     private var pending: Set<String> = []
 
+    /// Hosts whose fetch already returned nothing. Without this, every
+    /// re-render of a chip whose favicon failed kicks off a fresh fetch
+    /// — and because `cache` is observed, *any* successful favicon
+    /// load anywhere invalidates every chip, fueling a feedback loop
+    /// that constantly reflows the bar.
+    @ObservationIgnored
+    private var failed: Set<String> = []
+
     @ObservationIgnored
     private static let directory: URL = {
         let fm = FileManager.default
@@ -45,6 +53,7 @@ final class FaviconService {
     func icon(for urlString: String) -> NSImage? {
         guard let host = host(from: urlString) else { return nil }
         if let cached = cache[host] { return cached }
+        if failed.contains(host) { return nil }
         if pending.insert(host).inserted {
             Task { await fetch(host: host) }
         }
@@ -67,9 +76,15 @@ final class FaviconService {
 
         // Google's S2 favicon endpoint — works for any host without
         // requiring us to parse the page's <link rel="icon"> first.
-        guard let endpoint = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64") else { return }
+        guard let endpoint = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64") else {
+            failed.insert(host)
+            return
+        }
         guard let (data, _) = try? await URLSession.shared.data(from: endpoint),
-              let image = NSImage(data: data) else { return }
+              let image = NSImage(data: data) else {
+            failed.insert(host)
+            return
+        }
 
         cache[host] = image
         try? data.write(to: path(for: host))

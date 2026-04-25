@@ -33,6 +33,12 @@ final class BrowserWindowViewModel {
     var showingBookmarks: Bool = false
     var showingHistory: Bool = false
 
+    /// Bumped whenever the menu bar (⌘L) asks us to focus the URL bar.
+    /// `ContentView` watches this and flips its `@FocusState` accordingly.
+    /// Counter rather than Bool so consecutive presses always trip
+    /// `onChange`.
+    var focusURLToken: Int = 0
+
     /// Persisted preference. Mirrors a `UserDefaults` key so the toggle
     /// survives launches and stays in sync across windows.
     var showsBookmarksBar: Bool {
@@ -134,6 +140,19 @@ final class BrowserWindowViewModel {
     func closeTab(id: UUID) {
         withAnimation(.easeInOut(duration: 0.2)) { _ = window.closeTab(id: id) }
     }
+
+    func reopenLastClosedTab() {
+        withAnimation(.easeInOut(duration: 0.2)) { _ = window.reopenLastClosed() }
+    }
+
+    var hasReopenableTab: Bool { window.hasReopenableTab }
+
+    /// 1-based for menu UX (⌘1 → first tab). Out-of-range = no-op.
+    func switchToTab(number: Int) {
+        _ = window.switchTab(at: number - 1)
+    }
+
+    func focusURLBar() { focusURLToken &+= 1 }
 
     /// Close the focused tab; if it's the last one, close the window.
     func closeActiveTabOrWindow() {
@@ -239,6 +258,7 @@ final class BrowserWindowViewModel {
         BrowserCommandActions(
             newTab:                { [weak self] in self?.newTab() },
             closeActiveTab:        { [weak self] in self?.closeActiveTabOrWindow() },
+            reopenLastClosedTab:   { [weak self] in self?.reopenLastClosedTab() },
             reload:                { [weak self] in self?.reload() },
             stop:                  { [weak self] in self?.stop() },
             goBack:                { [weak self] in self?.goBack() },
@@ -249,13 +269,17 @@ final class BrowserWindowViewModel {
             openSettings:          { [weak self] in self?.openSettings() },
             savePagePDF:           { [weak self] in self?.savePagePDF() },
             toggleBookmarksBar:    { [weak self] in self?.toggleBookmarksBar() },
+            focusURLBar:           { [weak self] in self?.focusURLBar() },
+            switchToTab:           { [weak self] n in self?.switchToTab(number: n) },
             canGoBack:           browser?.canGoBack ?? false,
             canGoForward:        browser?.canGoForward ?? false,
             isLoading:           browser?.isLoading ?? false,
             hasCurrentURL:       hasCurrentURL,
             isCurrentBookmarked: isCurrentBookmarked,
             bookmarksBarVisible: bookmarksBarVisible,
-            canShowBookmarksBar: bookmarks?.barBookmarks.isEmpty == false
+            canShowBookmarksBar: bookmarks?.barBookmarks.isEmpty == false,
+            canReopenClosedTab:  hasReopenableTab,
+            tabCount:            window.tabs.count
         )
     }
 }

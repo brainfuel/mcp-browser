@@ -222,6 +222,7 @@ private struct URLBarField: View {
                     .foregroundStyle(vm.isCurrentBookmarked ? Color.yellow : Color.secondary)
             }
             .buttonStyle(.plain)
+            .padding(.trailing, 2)
             .disabled(!vm.hasCurrentURL)
             .help(vm.isCurrentBookmarked ? "Remove bookmark" : "Bookmark this page")
 
