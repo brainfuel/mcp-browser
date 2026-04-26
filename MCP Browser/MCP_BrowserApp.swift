@@ -15,23 +15,27 @@ struct MCP_BrowserApp: App {
     @State private var actionLog: ActionLog
     @State private var recorder: Recorder
     @State private var coordinator: MCPCoordinator
-    @State private var bookmarks = BookmarkStore()
+    @State private var bookmarks: BookmarkStore
     @State private var history = HistoryStore()
     @State private var favicons = FaviconService()
+    @State private var downloads = DownloadStore()
 
     init() {
         let settings = AgentSettings()
         let log = ActionLog()
         let rec = Recorder()
         let presenter = DefaultBrowserPresenter()
+        let bm = BookmarkStore()
         _agentSettings = State(initialValue: settings)
         _actionLog = State(initialValue: log)
         _recorder = State(initialValue: rec)
+        _bookmarks = State(initialValue: bm)
         _coordinator = State(initialValue: MCPCoordinator(
             agentSettings: settings,
             actionLog: log,
             recorder: rec,
-            presenter: presenter
+            presenter: presenter,
+            bookmarks: bm
         ))
     }
 
@@ -45,6 +49,7 @@ struct MCP_BrowserApp: App {
                 .environment(actionLog)
                 .environment(recorder)
                 .environment(favicons)
+                .environment(downloads)
         }
         .windowResizability(.contentSize)
         .windowToolbarStyle(.unified(showsTitle: false))
