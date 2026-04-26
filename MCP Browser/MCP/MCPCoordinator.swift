@@ -94,14 +94,37 @@ final class MCPCoordinator: MCPHost {
 
     // MARK: - Internals
 
-    private func bootServerIfNeeded(port: UInt16) {
+    private func bootServerIfNeeded() {
         guard server == nil else { return }
+        serverState = .starting
         do {
-            let s = try MCPServer(port: port, host: { [weak self] in self })
+            let s = try MCPServer(
+                port: Self.defaultPort,
+                host: { [weak self] in self },
+                onStateChange: { [weak self] state in
+                    Task { @MainActor [weak self] in
+                        self?.handleServerStateChange(state)
+                    }
+                }
+            )
             try s.start()
             server = s
         } catch {
+            serverState = .failed(error.localizedDescription)
             NSLog("MCP server failed to start: \(error)")
+        }
+    }
+
+    private func handleServerStateChange(_ state: MCPServer.LifecycleState) {
+        switch state {
+        case .starting:
+            serverState = .starting
+        case .ready:
+            serverState = .running
+        case .failed(let message):
+            serverState = .failed(message)
+        case .stopped:
+            serverState = .stopped
         }
     }
 

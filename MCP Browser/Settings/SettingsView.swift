@@ -12,14 +12,15 @@ import AppKit
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
-    /// Must match the port used in MCP_BrowserApp.swift.
-    static let endpoint = "http://127.0.0.1:8833/mcp"
+    static let endpoint = MCPCoordinator.endpoint
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
             TabView {
+                GeneralSettingsView()
+                    .tabItem { Label("General", systemImage: "gearshape") }
                 ConnectionSettingsView(endpoint: Self.endpoint)
                     .tabItem { Label("Connection", systemImage: "network") }
                 BookmarksSettingsView()
