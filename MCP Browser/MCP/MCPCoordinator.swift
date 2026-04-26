@@ -12,10 +12,20 @@ import Foundation
 @MainActor
 @Observable
 final class MCPCoordinator: MCPHost {
+    static let defaultPort: UInt16 = 8833
+    static let endpoint = "http://127.0.0.1:\(defaultPort)/mcp"
+
+    enum ServerState: Equatable {
+        case stopped
+        case starting
+        case running
+        case failed(String)
+    }
 
     // MARK: - Public surface
 
     private(set) var server: MCPServer?
+    private(set) var serverState: ServerState = .stopped
 
     /// Focused window's tabs. Tool calls re-resolve through this on
     /// every invocation so they follow window focus.
@@ -53,20 +63,22 @@ final class MCPCoordinator: MCPHost {
         recorder.onStateChange = { [weak self] _ in
             self?.applyRecordingToAllTabs()
         }
+
+        bootServerIfNeeded()
     }
 
     // MARK: - Window lifecycle
 
-    /// Register a window's tabs container. First registration boots
-    /// the MCP server. Hands per-tab dependencies down so tabs don't
-    /// need to know about the coordinator.
-    func register(tabs: BrowserWindow, port: UInt16) {
+    /// Register a window's tabs container so tool calls can follow the
+    /// focused browser window. The server boots eagerly at app launch,
+    /// but we still re-check here as a defensive fallback.
+    func register(tabs: BrowserWindow) {
         tabs.agentSettings = agentSettings
         tabs.recorder = recorder
         tabs.presenter = presenter
         registered.append(Weak(value: tabs))
         if activeTabs == nil { activeTabs = tabs }
-        bootServerIfNeeded(port: port)
+        bootServerIfNeeded()
     }
 
     func setActive(_ tabs: BrowserWindow) {
