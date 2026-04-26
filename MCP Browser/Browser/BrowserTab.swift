@@ -27,18 +27,36 @@ final class BrowserTab: NSObject, Identifiable {
     let id = UUID()
 
     /// The backing web view. WebViewHost installs it into the SwiftUI
-    /// tree; tool handlers manipulate it directly.
-    let webView: WKWebView
+    /// tree; tool handlers manipulate it directly. Reassigned by
+    /// `hibernate()` / `wake()` so the WebContent process can be torn
+    /// down for inactive tabs.
+    private(set) var webView: WKWebView
 
     // MARK: - Observable surface
 
     var urlString: String = ""
-    var currentURL: URL? { webView.url }
+    var currentURL: URL? {
+        if isHibernated { return hibernatedURL }
+        return webView.url
+    }
     var pageTitle: String = ""
     var isLoading: Bool = false
     var canGoBack: Bool = false
     var canGoForward: Bool = false
     var estimatedProgress: Double = 0
+
+    // MARK: - Hibernation
+
+    /// True when the tab's WebContent process has been released. A tiny
+    /// placeholder web view stands in to keep the non-optional invariant.
+    private(set) var isHibernated: Bool = false
+
+    /// Updated when the tab loses focus (becomes inactive). The window's
+    /// sweep uses this to pick stale tabs.
+    var lastActivatedAt: Date = .now
+
+    private var hibernatedURL: URL?
+    private var hibernatedInteractionState: Data?
 
     // MARK: - Wiring
 
@@ -50,11 +68,38 @@ final class BrowserTab: NSObject, Identifiable {
     /// model never imports AppKit beyond what WebKit exposes.
     weak var presenter: BrowserPresenter?
 
+    /// Sink for user-initiated downloads. Set by the owning window so a
+    /// single store collects downloads from every tab.
+    weak var downloadStore: DownloadStore?
+
     // MARK: - Internal state
 
     /// File URL fed to the next `runOpenPanel` callback. Set by the
     /// `upload_file` MCP tool before triggering a click on an input.
     var pendingUpload: URL?
+
+    /// How to auto-respond to JS dialogs (alert/confirm/prompt). When
+    /// nil, dialogs are auto-dismissed (alerts complete, confirms
+    /// return false, prompts return nil) and just logged.
+    struct DialogPolicy {
+        enum Action { case accept, dismiss }
+        var action: Action
+        var promptText: String?
+        /// True = applies once then clears. False = persistent.
+        var once: Bool
+    }
+    var dialogPolicy: DialogPolicy?
+
+    /// Recent JS dialog events (newest last). Cleared on navigation.
+    struct DialogEvent {
+        let kind: String          // "alert" | "confirm" | "prompt"
+        let message: String
+        let defaultPrompt: String?
+        let response: String      // "accepted" | "dismissed"
+        let returnedText: String?
+        let at: Date
+    }
+    var dialogLog: [DialogEvent] = []
 
     /// KVO tokens — held so the observations stay alive.
     private var observations: [NSKeyValueObservation] = []
@@ -71,14 +116,23 @@ final class BrowserTab: NSObject, Identifiable {
     private static let sharedProcessPool = WKProcessPool()
 
     init(configuration: WKWebViewConfiguration? = nil) {
-        let config = configuration ?? WKWebViewConfiguration()
-        if configuration == nil {
+        self.webView = Self.makeConfiguredWebView(seed: configuration)
+        super.init()
+        attach(to: webView)
+    }
+
+    /// Build a fully-configured `WKWebView` — script handlers, shared
+    /// process pool, default data store. Used by `init` and by `wake()`
+    /// when re-creating after hibernation.
+    private static func makeConfiguredWebView(seed: WKWebViewConfiguration?) -> WKWebView {
+        let config = seed ?? WKWebViewConfiguration()
+        if seed == nil {
             config.websiteDataStore = .default()
-            config.processPool = Self.sharedProcessPool
+            config.processPool = sharedProcessPool
         }
         config.userContentController = WKUserContentController()
-
         for source in [BrowserScripts.networkLog,
+                       BrowserScripts.consoleLog,
                        BrowserScripts.sensitiveSubmit,
                        BrowserScripts.recorder] {
             config.userContentController.addUserScript(WKUserScript(
@@ -87,19 +141,60 @@ final class BrowserTab: NSObject, Identifiable {
                 forMainFrameOnly: false
             ))
         }
+        return ContextWebView(frame: .zero, configuration: config)
+    }
 
-        self.webView = ContextWebView(frame: .zero, configuration: config)
-        super.init()
-
+    /// Wire delegates, message handlers, and KVO onto a freshly built
+    /// (or re-built) web view.
+    private func attach(to webView: WKWebView) {
         let proxy = ScriptMessageProxy(owner: self)
-        config.userContentController.add(proxy, name: "mcpConfirmSubmit")
-        config.userContentController.add(proxy, name: "mcpRecord")
-
+        webView.configuration.userContentController.add(proxy, name: "mcpConfirmSubmit")
+        webView.configuration.userContentController.add(proxy, name: "mcpRecord")
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
-
         installKVO()
+    }
+
+    // MARK: - Hibernation lifecycle
+
+    /// Drop the WebContent process. Captures URL + interaction state so
+    /// `wake()` can resume scroll position, form fields, and the back/
+    /// forward stack. No-op if already hibernated.
+    func hibernate() {
+        guard !isHibernated else { return }
+        hibernatedURL = webView.url
+        if #available(macOS 12.0, *) {
+            hibernatedInteractionState = webView.interactionState as? Data
+        }
+        observations.removeAll()
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        // Replace with a tiny placeholder so the property stays
+        // non-optional. The previous web view deallocates and its
+        // WebContent process exits.
+        self.webView = WKWebView(frame: .zero)
+        self.isLoading = false
+        self.estimatedProgress = 0
+        isHibernated = true
+    }
+
+    /// Recreate the web view and restore session state. No-op if not
+    /// hibernated.
+    func wake() {
+        guard isHibernated else { return }
+        let fresh = Self.makeConfiguredWebView(seed: nil)
+        self.webView = fresh
+        attach(to: fresh)
+        if #available(macOS 12.0, *), let state = hibernatedInteractionState {
+            fresh.interactionState = state
+        } else if let url = hibernatedURL {
+            fresh.load(URLRequest(url: url))
+        }
+        hibernatedInteractionState = nil
+        hibernatedURL = nil
+        isHibernated = false
     }
 
     /// KVO callbacks fire on the thread the property changes on; for
@@ -153,6 +248,44 @@ final class BrowserTab: NSObject, Identifiable {
     func reload()      { webView.reload() }
     func stopLoading() { webView.stopLoading() }
 
+    // MARK: - Zoom
+
+    func zoomIn()    { setZoom(webView.pageZoom * ZoomStore.step) }
+    func zoomOut()   { setZoom(webView.pageZoom / ZoomStore.step) }
+    func resetZoom() { setZoom(1.0) }
+
+    private func setZoom(_ zoom: Double) {
+        let clamped = ZoomStore.clamp(zoom)
+        webView.pageZoom = clamped
+        ZoomStore.set(clamped, for: webView.url?.host)
+    }
+
+    /// Apply the saved zoom for `host`. Called on every navigation
+    /// commit so per-site preferences survive across visits.
+    fileprivate func applySavedZoom(host: String?) {
+        webView.pageZoom = ZoomStore.zoom(for: host)
+    }
+
+    /// Find-in-page. Highlights the first match and scrolls to it.
+    /// `forward = false` searches backwards. The completion fires with
+    /// whether anything matched so the bar can show a not-found state.
+    func find(_ query: String,
+              forward: Bool = true,
+              completion: ((Bool) -> Void)? = nil) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            completion?(false)
+            return
+        }
+        let config = WKFindConfiguration()
+        config.backwards = !forward
+        config.wraps = true
+        config.caseSensitive = false
+        webView.find(trimmed, configuration: config) { result in
+            completion?(result.matchFound)
+        }
+    }
+
     /// Renders raw HTML directly. Useful as an MCP sink so agents can
     /// produce HTML and have it displayed without hosting it.
     func renderHTML(_ html: String, baseURL: URL? = nil) {
@@ -167,9 +300,107 @@ final class BrowserTab: NSObject, Identifiable {
         return Self.stringify(result)
     }
 
-    /// Best-effort extraction of visible text via `document.body.innerText`.
-    func readText() async throws -> String {
-        let result = try await runJS("document.body ? document.body.innerText : ''")
+    /// Best-effort extraction of page text. Scrolls the document end to
+    /// end to trigger IntersectionObserver-based lazy hydration, reads
+    /// `innerText` from the main document and walks same-origin iframes
+    /// (falling back to `textContent`), then restores the scroll
+    /// position. Cross-origin frames are skipped silently.
+    enum ReadTextMode: String { case visible, all }
+
+    func readText(mode: ReadTextMode = .visible) async throws -> String {
+        let metricsJS = """
+        ({
+          x: window.scrollX, y: window.scrollY,
+          h: Math.max(
+            document.body ? document.body.scrollHeight : 0,
+            document.documentElement ? document.documentElement.scrollHeight : 0
+          ),
+          step: Math.max(window.innerHeight || 800, 400)
+        })
+        """
+        if let metrics = try await runJS(metricsJS) as? [String: Any],
+           let height = (metrics["h"] as? NSNumber)?.doubleValue,
+           let step = (metrics["step"] as? NSNumber)?.doubleValue,
+           height > 0, step > 0 {
+            let origX = (metrics["x"] as? NSNumber)?.doubleValue ?? 0
+            let origY = (metrics["y"] as? NSNumber)?.doubleValue ?? 0
+            var y = 0.0
+            while y < height {
+                _ = try? await runJS("window.scrollTo(0, \(y))")
+                try? await Task.sleep(nanoseconds: 60_000_000)
+                y += step
+            }
+            _ = try? await runJS("window.scrollTo(0, \(height))")
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            _ = try? await runJS("window.scrollTo(\(origX), \(origY))")
+        }
+
+        let visibleJS = """
+        (() => {
+          const parts = [];
+          const visit = (doc) => {
+            if (!doc || !doc.body) return;
+            const txt = doc.body.innerText || doc.body.textContent || '';
+            if (txt) parts.push(txt);
+            const frames = doc.querySelectorAll('iframe, frame');
+            for (const f of frames) {
+              try { visit(f.contentDocument); } catch (_) { /* cross-origin */ }
+            }
+          };
+          visit(document);
+          return parts.join('\\n\\n');
+        })()
+        """
+
+        // Recursive walk over every node — including shadow roots and
+        // same-origin iframes — collecting visible text, image alt,
+        // aria-label, button/input labels. Skips <script>/<style>.
+        // Output is line-deduped to avoid the repetition that comes
+        // from textContent's lack of layout-aware spacing.
+        let allJS = """
+        (() => {
+          const SKIP = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE']);
+          const out = [];
+          const seen = new Set();
+          const push = (s) => {
+            if (!s) return;
+            const t = String(s).replace(/\\s+/g, ' ').trim();
+            if (!t || seen.has(t)) return;
+            seen.add(t);
+            out.push(t);
+          };
+          const visit = (node) => {
+            if (!node) return;
+            if (node.nodeType === Node.TEXT_NODE) {
+              push(node.nodeValue);
+              return;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return;
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              if (SKIP.has(node.tagName)) return;
+              const tag = node.tagName;
+              if (tag === 'IMG' && node.alt) push(node.alt);
+              if (tag === 'INPUT') {
+                if (node.placeholder) push(node.placeholder);
+                if (node.value && (node.type === 'submit' || node.type === 'button')) push(node.value);
+              }
+              const aria = node.getAttribute && node.getAttribute('aria-label');
+              if (aria) push(aria);
+              if (tag === 'IFRAME' || tag === 'FRAME') {
+                try { visit(node.contentDocument); } catch (_) { if (node.src) push('[iframe: ' + node.src + ']'); }
+                return;
+              }
+              if (node.shadowRoot) visit(node.shadowRoot);
+            }
+            for (let c = node.firstChild; c; c = c.nextSibling) visit(c);
+          };
+          visit(document);
+          return out.join('\\n');
+        })()
+        """
+
+        let readJS = mode == .all ? allJS : visibleJS
+        let result = try await runJS(readJS)
         return (result as? String) ?? ""
     }
 
@@ -200,8 +431,7 @@ final class BrowserTab: NSObject, Identifiable {
         if hasDot && !hasSpace, let url = URL(string: "https://\(raw)") {
             return url
         }
-        let encoded = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? raw
-        return URL(string: "https://www.google.com/search?q=\(encoded)")!
+        return SearchEngine.current.searchURL(for: raw)
     }
 
     /// Render an arbitrary JS value as a Swift string. Used by `evalJS`
@@ -316,12 +546,46 @@ extension BrowserTab: WKNavigationDelegate {
         NSWorkspace.shared.open(url)
     }
 
+    /// Promote responses WebKit can't render (or that arrive with
+    /// `Content-Disposition: attachment`) into `WKDownload`s so they
+    /// land in the Downloads list instead of showing a blank page.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        let canShow = navigationResponse.canShowMIMEType
+        var isAttachment = false
+        if let http = navigationResponse.response as? HTTPURLResponse,
+           let disp = http.value(forHTTPHeaderField: "Content-Disposition") {
+            isAttachment = disp.lowercased().contains("attachment")
+        }
+        if !canShow || isAttachment {
+            decisionHandler(.download)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 navigationResponse: WKNavigationResponse,
+                 didBecome download: WKDownload) {
+        let url = navigationResponse.response.url
+        downloadStore?.attach(download, sourceURL: url, suggestedFilename: navigationResponse.response.suggestedFilename)
+    }
+
+    func webView(_ webView: WKWebView,
+                 navigationAction: WKNavigationAction,
+                 didBecome download: WKDownload) {
+        downloadStore?.attach(download, sourceURL: navigationAction.request.url, suggestedFilename: nil)
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        dialogLog.removeAll()
         // Refresh per-page agent state so the sensitive-submit script
         // and recorder gate have the current values when the page
         // wires up.
         applyAgentStateToPage()
         applyRecordingStateToPage()
+        applySavedZoom(host: webView.url?.host)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -351,6 +615,59 @@ extension BrowserTab: WKUIDelegate {
             webView.load(URLRequest(url: url))
         }
         return nil
+    }
+
+    /// alert(). Auto-completes; logs to `dialogLog`. Pre-set
+    /// `dialogPolicy` via the `dialog` MCP tool to control behavior.
+    func webView(_ webView: WKWebView,
+                 runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping () -> Void) {
+        let policy = consumeDialogPolicy()
+        let response: String = (policy?.action == .dismiss) ? "dismissed" : "accepted"
+        dialogLog.append(.init(
+            kind: "alert", message: message, defaultPrompt: nil,
+            response: response, returnedText: nil, at: Date()
+        ))
+        completionHandler()
+    }
+
+    /// confirm(). Returns true on accept, false on dismiss (default).
+    func webView(_ webView: WKWebView,
+                 runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (Bool) -> Void) {
+        let policy = consumeDialogPolicy()
+        let accept = (policy?.action == .accept)
+        dialogLog.append(.init(
+            kind: "confirm", message: message, defaultPrompt: nil,
+            response: accept ? "accepted" : "dismissed",
+            returnedText: nil, at: Date()
+        ))
+        completionHandler(accept)
+    }
+
+    /// prompt(). Returns the policy's promptText on accept, nil on dismiss.
+    func webView(_ webView: WKWebView,
+                 runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        let policy = consumeDialogPolicy()
+        let accept = (policy?.action == .accept)
+        let text: String? = accept ? (policy?.promptText ?? defaultText ?? "") : nil
+        dialogLog.append(.init(
+            kind: "prompt", message: prompt, defaultPrompt: defaultText,
+            response: accept ? "accepted" : "dismissed",
+            returnedText: text, at: Date()
+        ))
+        completionHandler(text)
+    }
+
+    private func consumeDialogPolicy() -> DialogPolicy? {
+        guard let p = dialogPolicy else { return nil }
+        if p.once { dialogPolicy = nil }
+        return p
     }
 
     /// Camera / microphone permission prompt. Forwarded to the

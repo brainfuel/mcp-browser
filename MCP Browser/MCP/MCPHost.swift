@@ -13,11 +13,12 @@ import Foundation
 
 @MainActor
 protocol MCPHost: AnyObject {
-    var activeBrowser: BrowserTab?  { get }
+    var activeBrowser: BrowserTab?    { get }
     var activeTabs:    BrowserWindow? { get }
     var agentSettings: AgentSettings  { get }
     var actionLog:     ActionLog      { get }
     var pip:           PipController  { get }
+    var bookmarks:     BookmarkStore  { get }
 }
 
 extension MCPHost {
