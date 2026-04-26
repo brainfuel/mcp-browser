@@ -58,12 +58,14 @@ struct BookmarksBarView: View {
                 BarOverflowLayout(spacing: 4) {
                     ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
                         BookmarksBarNodeView(node: node, index: index)
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                     BarOverflowMenu(allNodes: nodes)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+                .animation(.spring(response: 0.32, dampingFraction: 0.82), value: nodeIDs(nodes))
             }
         }
         .background(
@@ -74,12 +76,16 @@ struct BookmarksBarView: View {
         .frame(height: nodes.isEmpty ? 28 : nil)
         .dropDestination(for: PageDragPayload.self) { items, _ in
             guard let page = items.first, !page.url.isEmpty else { return false }
-            store.add(title: page.title, url: page.url, parentID: store.barFolderID)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                store.add(title: page.title, url: page.url, parentID: store.barFolderID)
+            }
             return true
         } isTargeted: { isBarTargeted = $0 }
         .dropDestination(for: BookmarkDragPayload.self) { items, _ in
             guard let payload = items.first else { return false }
-            store.move(id: payload.id, to: store.barFolderID)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                store.move(id: payload.id, to: store.barFolderID)
+            }
             return true
         } isTargeted: { isBarTargeted = $0 }
     }
@@ -427,6 +433,7 @@ private struct BookmarksBarNodeView: View {
 private struct BookmarkBarItem: View {
     @Environment(BookmarkStore.self) private var store
     @Environment(BrowserTab.self) private var browser
+    @Environment(BrowserWindow.self) private var window
 
     let bookmark: Bookmark
     let index: Int
@@ -452,16 +459,35 @@ private struct BookmarkBarItem: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .help("\(bookmark.title)\n\(bookmark.url)")
+        .contextMenu {
+            Button("Open in New Tab") {
+                window.newTab(url: bookmark.url)
+            }
+            Button("Copy Link") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(bookmark.url, forType: .string)
+            }
+            Divider()
+            Button("Remove", role: .destructive) {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    store.remove(id: bookmark.id)
+                }
+            }
+        }
         .draggable(BookmarkDragPayload(id: bookmark.id))
         .dropDestination(for: BookmarkDragPayload.self) { items, _ in
             guard let payload = items.first, payload.id != bookmark.id else { return false }
-            store.move(id: payload.id, to: store.barFolderID, index: index)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                store.move(id: payload.id, to: store.barFolderID, index: index)
+            }
             return true
         } isTargeted: { isTargeted = $0 }
         .dropDestination(for: PageDragPayload.self) { items, _ in
             guard let page = items.first, !page.url.isEmpty else { return false }
-            if let newID = store.add(title: page.title, url: page.url, parentID: store.barFolderID) {
-                store.move(id: newID, to: store.barFolderID, index: index)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                if let newID = store.add(title: page.title, url: page.url, parentID: store.barFolderID) {
+                    store.move(id: newID, to: store.barFolderID, index: index)
+                }
             }
             return true
         } isTargeted: { isTargeted = $0 }
@@ -496,6 +522,15 @@ private struct BookmarkBarFolder: View {
     let folder: BookmarkFolder
     let index: Int
     @State private var isTargeted = false
+    @Environment(BrowserWindow.self) private var window
+
+    private func openAll(in folderID: UUID) {
+        for node in store.children(of: folderID) {
+            if case .bookmark(let b) = node {
+                window.newTab(url: b.url)
+            }
+        }
+    }
 
     private let iconTextSpacing: CGFloat = 2
 

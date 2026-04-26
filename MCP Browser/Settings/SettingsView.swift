@@ -53,9 +53,20 @@ struct SettingsView: View {
 }
 
 #Preview {
+    let settings = AgentSettings()
+    let log = ActionLog()
+    let recorder = Recorder()
+
     SettingsView()
-        .environment(AgentSettings())
-        .environment(ActionLog())
+        .environment(MCPCoordinator(
+            agentSettings: settings,
+            actionLog: log,
+            recorder: recorder,
+            presenter: DefaultBrowserPresenter()
+        ))
+        .environment(settings)
+        .environment(log)
         .environment(BookmarkStore())
         .environment(HistoryStore())
+        .environment(recorder)
 }
