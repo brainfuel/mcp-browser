@@ -65,10 +65,16 @@ final class BrowserTab: NSObject, Identifiable {
     /// `createWebViewWith`. We always start with a fresh content
     /// controller because the inherited one already has our message
     /// handlers attached (and adding the same handler twice throws).
+    /// Shared across every tab WebKit doesn't already hand us a config
+    /// for. A single pool lets WebKit consolidate Web Content processes
+    /// across tabs instead of standing up a fresh one per tab.
+    private static let sharedProcessPool = WKProcessPool()
+
     init(configuration: WKWebViewConfiguration? = nil) {
         let config = configuration ?? WKWebViewConfiguration()
         if configuration == nil {
             config.websiteDataStore = .default()
+            config.processPool = Self.sharedProcessPool
         }
         config.userContentController = WKUserContentController()
 
