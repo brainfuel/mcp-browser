@@ -22,6 +22,17 @@ final class FaviconService {
     /// populates a host.
     private(set) var cache: [String: NSImage] = [:]
 
+    /// LRU cap on the in-memory cache. Disk copy is kept, so evicted
+    /// hosts re-hydrate from disk on the next lookup without a network
+    /// round-trip.
+    @ObservationIgnored
+    private static let memoryCap = 1000
+
+    /// Hosts in least-recently-used → most-recently-used order. Updated
+    /// on every read so eviction targets cold entries.
+    @ObservationIgnored
+    private var lru: [String] = []
+
     @ObservationIgnored
     private var pending: Set<String> = []
 
@@ -52,7 +63,10 @@ final class FaviconService {
     /// in that case so a later body pass picks it up.
     func icon(for urlString: String) -> NSImage? {
         guard let host = host(from: urlString) else { return nil }
-        if let cached = cache[host] { return cached }
+        if let cached = cache[host] {
+            touch(host)
+            return cached
+        }
         if failed.contains(host) { return nil }
         if pending.insert(host).inserted {
             Task { await fetch(host: host) }
@@ -70,7 +84,7 @@ final class FaviconService {
         defer { pending.remove(host) }
 
         if let onDisk = loadFromDisk(host: host) {
-            cache[host] = onDisk
+            store(image: onDisk, for: host)
             return
         }
 
@@ -86,8 +100,24 @@ final class FaviconService {
             return
         }
 
-        cache[host] = image
+        store(image: image, for: host)
         try? data.write(to: path(for: host))
+    }
+
+    private func store(image: NSImage, for host: String) {
+        cache[host] = image
+        touch(host)
+    }
+
+    private func touch(_ host: String) {
+        if let idx = lru.firstIndex(of: host) {
+            lru.remove(at: idx)
+        }
+        lru.append(host)
+        while lru.count > Self.memoryCap {
+            let evict = lru.removeFirst()
+            cache.removeValue(forKey: evict)
+        }
     }
 
     private func loadFromDisk(host: String) -> NSImage? {

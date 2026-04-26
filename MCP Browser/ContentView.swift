@@ -297,6 +297,7 @@ private struct TabChip: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: 180, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 

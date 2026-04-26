@@ -10,12 +10,15 @@ import SwiftUI
 import AppKit
 
 struct ConnectionSettingsView: View {
+    @Environment(MCPCoordinator.self) private var coordinator
     let endpoint: String
+    @State private var codexInstaller = CodexInstaller()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 serverSection
+                codexSection
                 clientsSection
             }
             .padding(8)
@@ -27,9 +30,9 @@ struct ConnectionSettingsView: View {
             sectionTitle("MCP SERVER")
             HStack {
                 Image(systemName: "circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(serverStatusColor)
                     .font(.system(size: 8))
-                Text("Running")
+                Text(serverStatusTitle)
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
@@ -48,6 +51,77 @@ struct ConnectionSettingsView: View {
             Text("Any MCP-aware client on this Mac can connect to the browser at the URL above.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let detail = serverStatusDetail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(serverStatusColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
+
+    private var codexSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("CODEX")
+            Text("Install or refresh a home-local Codex plugin for MCP Browser. The first time, choose your home folder so the sandbox can write ~/plugins and ~/.agents for you.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let path = codexInstaller.savedHomePath {
+                HStack(spacing: 8) {
+                    Image(systemName: codexInstaller.isInstalled ? "checkmark.circle.fill" : "folder.fill")
+                        .foregroundStyle(codexInstaller.isInstalled ? Color.green : Color.secondary)
+                    Text((path as NSString).abbreviatingWithTildeInPath)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Spacer()
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    codexInstaller.install(endpoint: endpoint)
+                } label: {
+                    Label(codexInstaller.isInstalling
+                          ? "Installing…"
+                          : (codexInstaller.isInstalled ? "Reinstall in Codex" : "Install in Codex…"),
+                          systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(codexInstaller.isInstalling)
+
+                Button {
+                    codexInstaller.chooseHomeFolder()
+                } label: {
+                    Label(codexInstaller.hasSavedHomeFolder ? "Change Folder…" : "Choose Folder…",
+                          systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                if codexInstaller.isInstalled {
+                    Button {
+                        codexInstaller.revealPluginInFinder()
+                    } label: {
+                        Label("Reveal Plugin", systemImage: "folder.badge.gearshape")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Spacer()
+            }
+
+            if let lastResult = codexInstaller.lastResult {
+                resultBanner(lastResult)
+            }
+            if let error = codexInstaller.errorMessage {
+                errorBanner(error)
+            }
         }
         .padding(16)
         .background(
@@ -76,6 +150,74 @@ struct ConnectionSettingsView: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .tracking(0.5)
+    }
+
+    private var serverStatusTitle: String {
+        switch coordinator.serverState {
+        case .stopped:
+            return "Stopped"
+        case .starting:
+            return "Starting…"
+        case .running:
+            return "Running"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    private var serverStatusDetail: String? {
+        switch coordinator.serverState {
+        case .failed(let message):
+            return message
+        case .stopped:
+            return "The MCP server is not listening right now."
+        case .starting, .running:
+            return nil
+        }
+    }
+
+    private var serverStatusColor: Color {
+        switch coordinator.serverState {
+        case .running:
+            return .green
+        case .starting:
+            return .orange
+        case .failed:
+            return .red
+        case .stopped:
+            return .secondary
+        }
+    }
+
+    private func resultBanner(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text(text)
+                .font(.callout.weight(.medium))
+            Spacer()
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.green.opacity(0.10))
+        )
+    }
+
+    private func errorBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.10))
+        )
     }
 
     private func copy(_ s: String) {

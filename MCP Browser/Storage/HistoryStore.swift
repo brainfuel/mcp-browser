@@ -34,10 +34,34 @@ final class HistoryStore {
     private let fileURL = PersistentStore.url(for: "history.json")
     private let maxEntries = 5_000
 
+    /// UserDefaults key for the retention window (in days). Absent /
+    /// non-positive value means "keep forever".
+    static let retentionDaysKey = "historyRetentionDays"
+
     init() {
         if let loaded: [HistoryEntry] = PersistentStore.load([HistoryEntry].self, from: fileURL) {
             entries = loaded
         }
+        if pruneByRetention() { persist() }
+    }
+
+    /// Drops entries older than the configured retention window. Returns
+    /// true if anything was removed so callers can decide whether to
+    /// persist.
+    @discardableResult
+    private func pruneByRetention() -> Bool {
+        let days = UserDefaults.standard.integer(forKey: Self.retentionDaysKey)
+        guard days > 0 else { return false }
+        let cutoff = Date.now.addingTimeInterval(-Double(days) * 86_400)
+        let before = entries.count
+        entries.removeAll { $0.visitedAt < cutoff }
+        return entries.count != before
+    }
+
+    /// Re-applies the retention window now (e.g. when the user changes
+    /// it in Settings).
+    func applyRetention() {
+        if pruneByRetention() { persist() }
     }
 
     /// Records a visit. Collapses consecutive duplicates so reload
@@ -51,6 +75,7 @@ final class HistoryStore {
         } else {
             entries.insert(HistoryEntry(title: title, url: url), at: 0)
             if entries.count > maxEntries { entries.removeLast(entries.count - maxEntries) }
+            pruneByRetention()
         }
         persist()
     }

@@ -10,6 +10,8 @@ struct HistoryView: View {
     @Environment(BrowserTab.self) private var browser
     @Environment(\.dismiss) private var dismiss
     @State private var query: String = ""
+    @State private var displayLimit: Int = Self.pageSize
+    private static let pageSize = 200
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,15 +74,29 @@ struct HistoryView: View {
                             }
                         }
                     }
+                    if visible.count < filtered.count {
+                        Button("Load More (\(filtered.count - visible.count) remaining)") {
+                            displayLimit += Self.pageSize
+                        }
+                        .buttonStyle(.borderless)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 .listStyle(.inset)
             }
         }
         .frame(width: 560, height: 560)
+        .onChange(of: query) { _, _ in displayLimit = Self.pageSize }
     }
 
     private var filtered: [HistoryEntry] {
         store.search(query)
+    }
+
+    /// Trimmed to `displayLimit` so building day-grouped sections doesn't
+    /// have to scan the whole corpus every body pass.
+    private var visible: [HistoryEntry] {
+        Array(filtered.prefix(displayLimit))
     }
 
     /// Groups entries by day header (Today / Yesterday / date). Reasonably
@@ -95,7 +111,7 @@ struct HistoryView: View {
         var result: [(key: String, value: [HistoryEntry])] = []
         var current: (key: String, value: [HistoryEntry])?
 
-        for entry in filtered {
+        for entry in visible {
             let start = cal.startOfDay(for: entry.visitedAt)
             let daysAgo = cal.dateComponents([.day], from: start, to: today).day ?? 0
             let label: String

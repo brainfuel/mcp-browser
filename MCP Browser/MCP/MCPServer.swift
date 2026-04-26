@@ -19,17 +19,27 @@ import Network
 /// callbacks on its own dispatch queue. Tool handlers hop to @MainActor
 /// explicitly when they need to touch WKWebView.
 nonisolated final class MCPServer: @unchecked Sendable {
+    enum LifecycleState: Sendable {
+        case starting
+        case ready
+        case failed(String)
+        case stopped
+    }
+
     private let listener: NWListener
     private let port: UInt16
     private let tools: MCPToolRegistry
     private let queue = DispatchQueue(label: "mcp.server")
+    private let onStateChange: @Sendable (LifecycleState) -> Void
 
     init(
         port: UInt16,
-        host: @escaping @Sendable @MainActor () -> (any MCPHost)?
+        host: @escaping @Sendable @MainActor () -> (any MCPHost)?,
+        onStateChange: @escaping @Sendable (LifecycleState) -> Void = { _ in }
     ) throws {
         self.port = port
         self.tools = MCPToolRegistry(host: host)
+        self.onStateChange = onStateChange
 
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
@@ -45,10 +55,17 @@ nonisolated final class MCPServer: @unchecked Sendable {
     }
 
     func start() throws {
+        onStateChange(.starting)
         listener.stateUpdateHandler = { state in
             switch state {
-            case .ready:    NSLog("MCP server listening on http://127.0.0.1:\(self.port)/mcp")
-            case .failed(let err): NSLog("MCP server failed: \(err)")
+            case .ready:
+                self.onStateChange(.ready)
+                NSLog("MCP server listening on http://127.0.0.1:\(self.port)/mcp")
+            case .failed(let err):
+                self.onStateChange(.failed(err.localizedDescription))
+                NSLog("MCP server failed: \(err)")
+            case .cancelled:
+                self.onStateChange(.stopped)
             default: break
             }
         }

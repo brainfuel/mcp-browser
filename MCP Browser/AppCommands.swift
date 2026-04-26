@@ -33,6 +33,8 @@ struct BrowserCommandActions {
     var focusURLBar: () -> Void
     /// 1-based tab index. Out-of-range numbers are silently ignored.
     var switchToTab: (Int) -> Void
+    var undoBookmark: () -> Void
+    var redoBookmark: () -> Void
 
     var canGoBack: Bool
     var canGoForward: Bool
@@ -43,6 +45,8 @@ struct BrowserCommandActions {
     var canShowBookmarksBar: Bool
     var canReopenClosedTab: Bool
     var tabCount: Int
+    var canUndoBookmark: Bool
+    var canRedoBookmark: Bool
 }
 
 private struct BrowserCommandActionsKey: FocusedValueKey {
@@ -127,6 +131,19 @@ struct AppCommands: Commands {
             Divider()
             FocusedButton("Show All History",
                           shortcut: "y") { $0.openHistory() }
+        }
+
+        // Edit › Undo / Redo — drive bookmark undo. Replaces the
+        // standard responder-chain Undo so ⌘Z isn't swallowed by an
+        // empty NSUndoManager when the WKWebView is first responder.
+        CommandGroup(replacing: .undoRedo) {
+            FocusedButton("Undo",
+                          shortcut: "z",
+                          enabled: { $0.canUndoBookmark }) { $0.undoBookmark() }
+            FocusedButton("Redo",
+                          shortcut: "z",
+                          modifiers: [.command, .shift],
+                          enabled: { $0.canRedoBookmark }) { $0.redoBookmark() }
         }
 
         // Bookmarks › Add / Show

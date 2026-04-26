@@ -102,6 +102,65 @@ final class BookmarkStore {
     private static let rootKey = "ROOT"
     private let fileURL = PersistentStore.url(for: "bookmarks.json")
 
+    // MARK: - Undo
+
+    private struct Snapshot {
+        let bookmarks: [Bookmark]
+        let folders: [BookmarkFolder]
+        let childOrder: [String: [UUID]]
+        let barFolderID: UUID
+    }
+
+    private var undoStack: [Snapshot] = []
+    private var redoStack: [Snapshot] = []
+    private static let undoLimit = 50
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    private func captureUndo() {
+        let snap = Snapshot(
+            bookmarks: bookmarks,
+            folders: folders,
+            childOrder: childOrder,
+            barFolderID: barFolderID
+        )
+        undoStack.append(snap)
+        if undoStack.count > Self.undoLimit {
+            undoStack.removeFirst(undoStack.count - Self.undoLimit)
+        }
+        redoStack.removeAll()
+    }
+
+    private func restore(_ snap: Snapshot) {
+        bookmarks = snap.bookmarks
+        folders = snap.folders
+        childOrder = snap.childOrder
+        barFolderID = snap.barFolderID
+    }
+
+    func undo() {
+        guard let snap = undoStack.popLast() else { return }
+        let current = Snapshot(
+            bookmarks: bookmarks, folders: folders,
+            childOrder: childOrder, barFolderID: barFolderID
+        )
+        redoStack.append(current)
+        restore(snap)
+        persist()
+    }
+
+    func redo() {
+        guard let snap = redoStack.popLast() else { return }
+        let current = Snapshot(
+            bookmarks: bookmarks, folders: folders,
+            childOrder: childOrder, barFolderID: barFolderID
+        )
+        undoStack.append(current)
+        restore(snap)
+        persist()
+    }
+
     // MARK: - Init
 
     init() {
@@ -197,6 +256,7 @@ final class BookmarkStore {
     /// Create a new folder under `parentID` (nil = root). Returns its id.
     @discardableResult
     func createFolder(name: String, parentID: UUID? = nil) -> UUID {
+        captureUndo()
         let folder = BookmarkFolder(name: name, parentID: parentID)
         folders.append(folder)
         appendChild(id: folder.id, under: parentID)
@@ -213,6 +273,7 @@ final class BookmarkStore {
         if let existing = bookmarks.first(where: { $0.url == url }) {
             return existing.id
         }
+        captureUndo()
         let display = title.isEmpty ? url : title
         let bookmark = Bookmark(title: display, url: url, parentID: parentID)
         bookmarks.append(bookmark)
@@ -224,6 +285,7 @@ final class BookmarkStore {
     /// Remove a bookmark or folder. Folders cascade-remove their
     /// descendants so the store can never end up with orphaned IDs.
     func remove(id: UUID) {
+        captureUndo()
         if folders.contains(where: { $0.id == id }) {
             removeFolderCascading(id: id)
         } else {
@@ -238,6 +300,7 @@ final class BookmarkStore {
     /// Rename a bookmark. No-op for folders here; use `renameFolder`.
     func rename(id: Bookmark.ID, title: String) {
         guard let idx = bookmarks.firstIndex(where: { $0.id == id }) else { return }
+        captureUndo()
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         bookmarks[idx].title = trimmed.isEmpty ? bookmarks[idx].url : trimmed
         persist()
@@ -245,6 +308,7 @@ final class BookmarkStore {
 
     func renameFolder(id: UUID, name: String) {
         guard let idx = folders.firstIndex(where: { $0.id == id }) else { return }
+        captureUndo()
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         folders[idx].name = trimmed.isEmpty ? "Folder" : trimmed
         persist()
@@ -258,6 +322,7 @@ final class BookmarkStore {
            let newParent, isDescendant(of: id, candidate: newParent) {
             return
         }
+        captureUndo()
         // Detach
         for k in childOrder.keys { childOrder[k]?.removeAll { $0 == id } }
         if let bIdx = bookmarks.firstIndex(where: { $0.id == id }) {
@@ -280,6 +345,7 @@ final class BookmarkStore {
     /// import. Re-seeds an empty Favorites folder so the bar still has
     /// a home.
     func clearAll() {
+        captureUndo()
         bookmarks.removeAll()
         folders.removeAll()
         childOrder.removeAll()
@@ -292,6 +358,8 @@ final class BookmarkStore {
 
     func removeAll(matching url: String) {
         let ids = bookmarks.filter { $0.url == url }.map(\.id)
+        guard !ids.isEmpty else { return }
+        captureUndo()
         bookmarks.removeAll { $0.url == url }
         for k in childOrder.keys {
             childOrder[k]?.removeAll { ids.contains($0) }
@@ -317,6 +385,7 @@ final class BookmarkStore {
               let from = list.firstIndex(of: id) else { return }
         var clamped = max(0, min(targetIndex, list.count - 1))
         if from == clamped { return }
+        captureUndo()
         let item = list.remove(at: from)
         if clamped > from { clamped -= 1 }
         clamped = max(0, min(clamped, list.count))
@@ -341,6 +410,7 @@ final class BookmarkStore {
     /// previous (typically empty) Favorites placeholder.
     func setBarFolder(id: UUID) {
         guard folders.contains(where: { $0.id == id }) else { return }
+        captureUndo()
         // If the previous bar folder is empty and unused, reap it.
         let previous = barFolderID
         barFolderID = id

@@ -562,21 +562,36 @@ private struct BookmarkBarFolder: View {
                 .fill(isTargeted ? Color.accentColor.opacity(0.25) : Color.clear)
         )
         .help(folder.name)
+        .contextMenu {
+            Button("Open All in New Tabs") {
+                openAll(in: folder.id)
+            }
+            Divider()
+            Button("Remove", role: .destructive) {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    store.remove(id: folder.id)
+                }
+            }
+        }
         .dropDestination(for: BookmarkDragPayload.self) { items, _ in
             guard let payload = items.first, payload.id != folder.id else { return false }
             // Folder-onto-folder reorders along the bar; bookmark-onto-folder
             // drops the bookmark inside the folder. To nest folders, use the
             // bookmarks management sheet.
-            if store.folder(id: payload.id) != nil {
-                store.move(id: payload.id, to: store.barFolderID, index: index)
-            } else {
-                store.move(id: payload.id, to: folder.id)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                if store.folder(id: payload.id) != nil {
+                    store.move(id: payload.id, to: store.barFolderID, index: index)
+                } else {
+                    store.move(id: payload.id, to: folder.id)
+                }
             }
             return true
         } isTargeted: { isTargeted = $0 }
         .dropDestination(for: PageDragPayload.self) { items, _ in
             guard let page = items.first, !page.url.isEmpty else { return false }
-            store.add(title: page.title, url: page.url, parentID: folder.id)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                store.add(title: page.title, url: page.url, parentID: folder.id)
+            }
             return true
         } isTargeted: { isTargeted = $0 }
     }

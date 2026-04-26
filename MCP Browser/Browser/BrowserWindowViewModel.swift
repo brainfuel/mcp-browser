@@ -65,14 +65,13 @@ final class BrowserWindowViewModel {
     func setUp(coordinator: MCPCoordinator,
                bookmarks: BookmarkStore,
                history: HistoryStore,
-               recorder: Recorder,
-               port: UInt16 = 8833) {
+               recorder: Recorder) {
         self.coordinator = coordinator
         self.bookmarks = bookmarks
         self.history = history
         self.recorder = recorder
         window.historyRecorder = history
-        coordinator.register(tabs: window, port: port)
+        coordinator.register(tabs: window)
         urlField = browser?.urlString ?? ""
     }
 
@@ -271,6 +270,8 @@ final class BrowserWindowViewModel {
             toggleBookmarksBar:    { [weak self] in self?.toggleBookmarksBar() },
             focusURLBar:           { [weak self] in self?.focusURLBar() },
             switchToTab:           { [weak self] n in self?.switchToTab(number: n) },
+            undoBookmark:          { [weak self] in self?.bookmarks?.undo() },
+            redoBookmark:          { [weak self] in self?.bookmarks?.redo() },
             canGoBack:           browser?.canGoBack ?? false,
             canGoForward:        browser?.canGoForward ?? false,
             isLoading:           browser?.isLoading ?? false,
@@ -279,7 +280,9 @@ final class BrowserWindowViewModel {
             bookmarksBarVisible: bookmarksBarVisible,
             canShowBookmarksBar: bookmarks?.barBookmarks.isEmpty == false,
             canReopenClosedTab:  hasReopenableTab,
-            tabCount:            window.tabs.count
+            tabCount:            window.tabs.count,
+            canUndoBookmark:     bookmarks?.canUndo ?? false,
+            canRedoBookmark:     bookmarks?.canRedo ?? false
         )
     }
 }
