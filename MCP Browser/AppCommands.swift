@@ -35,6 +35,12 @@ struct BrowserCommandActions {
     var switchToTab: (Int) -> Void
     var undoBookmark: () -> Void
     var redoBookmark: () -> Void
+    var openFind: () -> Void
+    var findNext: () -> Void
+    var findPrevious: () -> Void
+    var zoomIn: () -> Void
+    var zoomOut: () -> Void
+    var resetZoom: () -> Void
 
     var canGoBack: Bool
     var canGoForward: Bool
@@ -98,6 +104,14 @@ struct AppCommands: Commands {
             Divider()
             FocusedButton("Open Location",
                           shortcut: "l") { $0.focusURLBar() }
+            Divider()
+            FocusedButton("Find…",
+                          shortcut: "f") { $0.openFind() }
+            FocusedButton("Find Next",
+                          shortcut: "g") { $0.findNext() }
+            FocusedButton("Find Previous",
+                          shortcut: "g",
+                          modifiers: [.command, .shift]) { $0.findPrevious() }
         }
 
         // Window › Tab N (⌘1…⌘9). Hidden when the window has only one
@@ -107,7 +121,7 @@ struct AppCommands: Commands {
             Divider()
         }
 
-        // View › Reload / Stop / Bookmarks Bar
+        // View › Reload / Stop / Zoom / Bookmarks Bar
         // Inject into the existing View menu (which SwiftUI auto-adds
         // for the toolbar item) instead of creating a duplicate.
         CommandGroup(after: .toolbar) {
@@ -116,6 +130,10 @@ struct AppCommands: Commands {
             FocusedButton("Stop",
                           shortcut: ".",
                           enabled: { $0.isLoading }) { $0.stop() }
+            Divider()
+            FocusedButton("Zoom In",  shortcut: "+") { $0.zoomIn() }
+            FocusedButton("Zoom Out", shortcut: "-") { $0.zoomOut() }
+            FocusedButton("Actual Size", shortcut: "0") { $0.resetZoom() }
             Divider()
             FocusedBookmarksBarToggle()
         }

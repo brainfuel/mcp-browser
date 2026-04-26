@@ -69,6 +69,55 @@ enum BrowserScripts {
     })();
     """
 
+    /// Wraps `console.log/info/warn/error/debug`, `window.onerror`, and
+    /// `unhandledrejection` to maintain a rolling buffer on
+    /// `window.__mcpConsole`. The `console_logs` MCP tool reads it.
+    static let consoleLog = """
+    (function(){
+      if (window.__mcpConsole) return;
+      const LOG = [];
+      const MAX = 1000;
+      window.__mcpConsole = LOG;
+      function push(e){ LOG.push(e); if (LOG.length > MAX) LOG.shift(); }
+      function fmt(args){
+        try {
+          return Array.from(args).map(a => {
+            if (a instanceof Error) return (a.stack || a.message || String(a));
+            if (typeof a === 'object' && a !== null) {
+              try { return JSON.stringify(a); } catch (_) { return String(a); }
+            }
+            return String(a);
+          }).join(' ');
+        } catch (_) { return ''; }
+      }
+      const levels = ['log','info','warn','error','debug'];
+      for (const lv of levels) {
+        const orig = console[lv];
+        if (typeof orig !== 'function') continue;
+        console[lv] = function(){
+          push({level: lv, message: fmt(arguments), at: Date.now()});
+          return orig.apply(console, arguments);
+        };
+      }
+      window.addEventListener('error', function(e){
+        const msg = e && e.message ? e.message : 'error';
+        const src = e && e.filename ? (' ' + e.filename + ':' + (e.lineno||0) + ':' + (e.colno||0)) : '';
+        const stack = e && e.error && e.error.stack ? ('\\n' + e.error.stack) : '';
+        push({level: 'exception', message: msg + src + stack, at: Date.now()});
+      });
+      window.addEventListener('unhandledrejection', function(e){
+        let msg = 'unhandled rejection';
+        try {
+          const r = e && e.reason;
+          if (r instanceof Error) msg = (r.stack || r.message);
+          else if (typeof r === 'object') msg = JSON.stringify(r);
+          else msg = String(r);
+        } catch (_) {}
+        push({level: 'rejection', message: msg, at: Date.now()});
+      });
+    })();
+    """
+
     /// Intercepts form submits on hosts that match the agent's
     /// sensitive list. Native code shows a confirmation alert and
     /// re-submits via `window.__mcpFinishConfirm(key)`.

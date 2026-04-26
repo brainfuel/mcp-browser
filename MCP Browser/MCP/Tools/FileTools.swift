@@ -68,6 +68,28 @@ enum PDFExportTool: MCPTool {
     }
 }
 
+enum ConsoleLogsTool: MCPTool {
+    struct Args: Decodable { let limit: Int?; let level: String? }
+    static let descriptor = ToolDescriptor(
+        name: "console_logs",
+        description: "Return recent console messages (log/info/warn/error/debug) plus uncaught exceptions and unhandled promise rejections from the current page, newest last. Cleared on navigation.",
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "limit": ["type": "integer", "description": "Max entries (newest last). Default 200."],
+                "level": [
+                    "type": "string",
+                    "enum": ["log", "info", "warn", "error", "debug", "exception", "rejection"],
+                    "description": "Optional filter. \"error\" also includes exception and rejection entries."
+                ]
+            ]
+        ]
+    )
+    static func execute(_ args: Args, host: any MCPHost) async throws -> ToolOutput {
+        .json(try await host.requireActiveBrowser().consoleLogs(limit: args.limit ?? 200, level: args.level))
+    }
+}
+
 enum NetworkLogTool: MCPTool {
     struct Args: Decodable { let limit: Int? }
     static let descriptor = ToolDescriptor(

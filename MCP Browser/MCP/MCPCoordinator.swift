@@ -38,6 +38,7 @@ final class MCPCoordinator: MCPHost {
     let pip: PipController
     let recorder: Recorder
     let presenter: BrowserPresenter
+    let bookmarks: BookmarkStore
 
     // MARK: - State
 
@@ -50,11 +51,13 @@ final class MCPCoordinator: MCPHost {
     init(agentSettings: AgentSettings,
          actionLog: ActionLog,
          recorder: Recorder,
-         presenter: BrowserPresenter) {
+         presenter: BrowserPresenter,
+         bookmarks: BookmarkStore) {
         self.agentSettings = agentSettings
         self.actionLog = actionLog
         self.recorder = recorder
         self.presenter = presenter
+        self.bookmarks = bookmarks
         self.pip = PipController(settings: agentSettings)
 
         agentSettings.onPipToggled = { [weak pip = self.pip] _ in

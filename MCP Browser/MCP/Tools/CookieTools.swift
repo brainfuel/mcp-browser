@@ -75,6 +75,41 @@ enum SetCookieTool: MCPTool {
     }
 }
 
+enum StorageTool: MCPTool {
+    struct Args: Decodable {
+        let kind: String
+        let op: String
+        let key: String?
+        let value: String?
+    }
+    static let descriptor = ToolDescriptor(
+        name: "storage",
+        description: "Read or write the current page's localStorage or sessionStorage. `kind` is \"local\" or \"session\". `op` is one of: get, set, remove, clear, keys. `get` without a key returns all entries.",
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "kind":  ["type": "string", "enum": ["local", "session"]],
+                "op":    ["type": "string", "enum": ["get", "set", "remove", "clear", "keys"]],
+                "key":   ["type": "string", "description": "Required for set/remove. Optional for get."],
+                "value": ["type": "string", "description": "Required for set."]
+            ],
+            "required": ["kind", "op"]
+        ]
+    )
+    static func execute(_ args: Args, host: any MCPHost) async throws -> ToolOutput {
+        guard let kind = BrowserTab.StorageKind(rawValue: args.kind) else {
+            throw RPCError(code: -32602, message: "invalid `kind` (expected local|session)")
+        }
+        guard let op = BrowserTab.StorageOp(rawValue: args.op) else {
+            throw RPCError(code: -32602, message: "invalid `op` (expected get|set|remove|clear|keys)")
+        }
+        let result = try await host.requireActiveBrowser().storage(
+            kind: kind, op: op, key: args.key, value: args.value
+        )
+        return .json(result ?? NSNull())
+    }
+}
+
 enum ClearSessionTool: MCPTool {
     static let descriptor = ToolDescriptor(
         name: "clear_session",

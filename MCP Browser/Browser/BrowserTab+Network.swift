@@ -84,4 +84,22 @@ extension BrowserTab {
         """
         return try await runJS(js)
     }
+
+    /// Recent console messages and uncaught errors captured by the
+    /// in-page shim, newest last. Optional `level` filter ("error"
+    /// includes uncaught exceptions and rejections too).
+    func consoleLogs(limit: Int, level: String?) async throws -> Any? {
+        let levelArg = level.map { "\"\($0)\"" } ?? "null"
+        let js = """
+        (function(n, lv){
+          let a = window.__mcpConsole || [];
+          if (lv) {
+            if (lv === 'error') a = a.filter(e => e.level === 'error' || e.level === 'exception' || e.level === 'rejection');
+            else a = a.filter(e => e.level === lv);
+          }
+          return a.slice(Math.max(0, a.length - n));
+        })(\(limit), \(levelArg))
+        """
+        return try await runJS(js)
+    }
 }

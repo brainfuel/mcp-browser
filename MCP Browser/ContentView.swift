@@ -20,6 +20,8 @@ struct ContentView: View {
     @Environment(BookmarkStore.self)  private var bookmarks
     @Environment(HistoryStore.self)   private var history
     @Environment(Recorder.self)       private var recorder
+    @Environment(DownloadStore.self)  private var downloads
+    @State private var showingDownloads: Bool = false
 
     var body: some View {
         @Bindable var vm = viewModel
@@ -42,6 +44,15 @@ struct ContentView: View {
             }
             WebViewHost()
                 .frame(minWidth: 800, minHeight: 520)
+                .overlay(alignment: .topTrailing) {
+                    if vm.findVisible {
+                        FindBar(vm: vm)
+                            .padding(.top, 8)
+                            .padding(.trailing, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: vm.findVisible)
         }
         .animation(.easeInOut(duration: 0.18), value: vm.bookmarksBarVisible)
         .animation(.easeInOut(duration: 0.18), value: vm.hasMultipleTabs)
@@ -76,7 +87,8 @@ struct ContentView: View {
                 coordinator: coordinator,
                 bookmarks: bookmarks,
                 history: history,
-                recorder: recorder
+                recorder: recorder,
+                downloads: downloads
             )
         }
         .onChange(of: vm.window.activeID) { _, _ in
@@ -148,6 +160,16 @@ struct ContentView: View {
                 Image(systemName: "plus")
             }
             .help("New tab")
+
+            Button { showingDownloads.toggle() } label: {
+                Image(systemName: downloads.hasActiveDownloads
+                      ? "arrow.down.circle.fill"
+                      : "arrow.down.circle")
+            }
+            .help("Downloads")
+            .popover(isPresented: $showingDownloads, arrowEdge: .top) {
+                DownloadsPopover(store: downloads)
+            }
 
             Button(action: vm.openBookmarks) {
                 Image(systemName: "book")
@@ -376,6 +398,69 @@ private struct URLSuggestionList: View {
     }
 }
 
+// MARK: - Find bar
+
+private struct FindBar: View {
+    @Bindable var vm: BrowserWindowViewModel
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Find on page", text: $vm.findQuery)
+                .textFieldStyle(.plain)
+                .frame(width: 200)
+                .focused($fieldFocused)
+                .onSubmit { vm.findNext() }
+                .onChange(of: vm.findQuery) { _, _ in
+                    // Re-search as the user types so highlights track.
+                    vm.findNext()
+                }
+
+            if vm.findHadNoMatches && !vm.findQuery.isEmpty {
+                Text("No matches")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button { vm.findPrevious() } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.findQuery.isEmpty)
+            .help("Previous match (⇧⌘G)")
+
+            Button { vm.findNext() } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.findQuery.isEmpty)
+            .help("Next match (⌘G)")
+
+            Button { vm.closeFind() } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+            .help("Close (Esc)")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.regularMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 8, y: 2)
+        .onAppear { fieldFocused = true }
+        .onChange(of: vm.findFocusToken) { _, _ in fieldFocused = true }
+    }
+}
+
 // MARK: - Environment plumbing
 
 /// Injects the active tab's `BrowserTab` into the environment so child
@@ -397,14 +482,16 @@ private struct OptionalBrowserEnvironment: ViewModifier {
     let agent = AgentSettings()
     let log = ActionLog()
     let rec = Recorder()
+    let bm = BookmarkStore()
     return ContentView()
         .environment(MCPCoordinator(
             agentSettings: agent,
             actionLog: log,
             recorder: rec,
-            presenter: DefaultBrowserPresenter()
+            presenter: DefaultBrowserPresenter(),
+            bookmarks: bm
         ))
-        .environment(BookmarkStore())
+        .environment(bm)
         .environment(HistoryStore())
         .environment(agent)
         .environment(log)

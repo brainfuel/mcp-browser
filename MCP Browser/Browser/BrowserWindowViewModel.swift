@@ -33,6 +33,16 @@ final class BrowserWindowViewModel {
     var showingBookmarks: Bool = false
     var showingHistory: Bool = false
 
+    // MARK: - Find in page
+
+    var findVisible: Bool = false
+    var findQuery: String = ""
+    /// True after a search returned no matches; bar uses it to show a
+    /// "no matches" hint.
+    var findHadNoMatches: Bool = false
+    /// Bumped whenever Find is opened so the field can grab focus / select.
+    var findFocusToken: Int = 0
+
     /// Bumped whenever the menu bar (⌘L) asks us to focus the URL bar.
     /// `ContentView` watches this and flips its `@FocusState` accordingly.
     /// Counter rather than Bool so consecutive presses always trip
@@ -52,6 +62,7 @@ final class BrowserWindowViewModel {
     private weak var bookmarks: BookmarkStore?
     private weak var history: HistoryStore?
     private weak var recorder: Recorder?
+    private weak var downloads: DownloadStore?
 
     // MARK: - Init
 
@@ -65,12 +76,15 @@ final class BrowserWindowViewModel {
     func setUp(coordinator: MCPCoordinator,
                bookmarks: BookmarkStore,
                history: HistoryStore,
-               recorder: Recorder) {
+               recorder: Recorder,
+               downloads: DownloadStore) {
         self.coordinator = coordinator
         self.bookmarks = bookmarks
         self.history = history
         self.recorder = recorder
+        self.downloads = downloads
         window.historyRecorder = history
+        window.downloadStore = downloads
         coordinator.register(tabs: window)
         urlField = browser?.urlString ?? ""
     }
@@ -219,6 +233,34 @@ final class BrowserWindowViewModel {
     func openBookmarks() { showingBookmarks = true }
     func openHistory()   { showingHistory = true }
 
+    // MARK: - Find actions
+
+    func openFind() {
+        findVisible = true
+        findFocusToken &+= 1
+        if !findQuery.isEmpty {
+            runFind(forward: true)
+        }
+    }
+
+    func closeFind() {
+        findVisible = false
+        findHadNoMatches = false
+    }
+
+    func findNext()     { runFind(forward: true) }
+    func findPrevious() { runFind(forward: false) }
+
+    private func runFind(forward: Bool) {
+        guard let browser, !findQuery.isEmpty else {
+            findHadNoMatches = !findQuery.isEmpty
+            return
+        }
+        browser.find(findQuery, forward: forward) { [weak self] matched in
+            self?.findHadNoMatches = !matched
+        }
+    }
+
     // MARK: - Save as PDF
 
     /// Present an `NSSavePanel` and write the active tab's PDF to the
@@ -272,6 +314,12 @@ final class BrowserWindowViewModel {
             switchToTab:           { [weak self] n in self?.switchToTab(number: n) },
             undoBookmark:          { [weak self] in self?.bookmarks?.undo() },
             redoBookmark:          { [weak self] in self?.bookmarks?.redo() },
+            openFind:              { [weak self] in self?.openFind() },
+            findNext:              { [weak self] in self?.findNext() },
+            findPrevious:          { [weak self] in self?.findPrevious() },
+            zoomIn:                { [weak self] in self?.browser?.zoomIn() },
+            zoomOut:               { [weak self] in self?.browser?.zoomOut() },
+            resetZoom:             { [weak self] in self?.browser?.resetZoom() },
             canGoBack:           browser?.canGoBack ?? false,
             canGoForward:        browser?.canGoForward ?? false,
             isLoading:           browser?.isLoading ?? false,

@@ -23,7 +23,16 @@ final class BrowserWindow {
     private(set) var tabs: [BrowserTab] = []
 
     /// The tab currently visible and targeted by MCP tools.
-    var activeID: UUID?
+    var activeID: UUID? {
+        didSet { handleActiveChange(from: oldValue, to: activeID) }
+    }
+
+    /// UserDefaults key for the hibernate-after window (in minutes).
+    /// Absent / non-positive value disables hibernation.
+    static let hibernateAfterMinutesKey = "tabHibernateAfterMinutes"
+
+    @ObservationIgnored
+    private var sweepTimer: Timer?
 
     /// LIFO of recently-closed tabs' URLs. ⌘⇧T pops one and opens a
     /// fresh tab pointed at the same address. Capped to keep the stack
@@ -53,6 +62,14 @@ final class BrowserWindow {
     /// tabs can't show submit confirms or file pickers.
     weak var presenter: BrowserPresenter?
 
+    /// Shared downloads store. Threaded into every tab so user-initiated
+    /// downloads from any tab appear in the same window-level list.
+    weak var downloadStore: DownloadStore? {
+        didSet {
+            for tab in tabs { tab.downloadStore = downloadStore }
+        }
+    }
+
     // MARK: - Init
 
     init() {
@@ -63,6 +80,43 @@ final class BrowserWindow {
         tabs = [seed]
         activeID = seed.id
         wire(seed)
+        startSweepTimer()
+    }
+
+    deinit {
+        sweepTimer?.invalidate()
+    }
+
+    private func startSweepTimer() {
+        // Re-check inactivity every minute. The closure does the cheap
+        // path itself; if the user has hibernation off, it returns
+        // immediately.
+        sweepTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.runHibernationSweep() }
+        }
+    }
+
+    private func runHibernationSweep() {
+        let mins = UserDefaults.standard.integer(forKey: Self.hibernateAfterMinutesKey)
+        guard mins > 0 else { return }
+        let cutoff = TimeInterval(mins * 60)
+        let now = Date.now
+        for tab in tabs where tab.id != activeID && !tab.isHibernated {
+            if now.timeIntervalSince(tab.lastActivatedAt) >= cutoff {
+                tab.hibernate()
+            }
+        }
+    }
+
+    /// Mark the previously-active tab as just-deactivated and wake the
+    /// newly-active one if it's hibernated.
+    private func handleActiveChange(from old: UUID?, to new: UUID?) {
+        if let old, let prev = tabs.first(where: { $0.id == old }) {
+            prev.lastActivatedAt = .now
+        }
+        if let new, let next = tabs.first(where: { $0.id == new }), next.isHibernated {
+            next.wake()
+        }
     }
 
     // MARK: - Tab management
@@ -133,6 +187,7 @@ final class BrowserWindow {
     private func wire(_ b: BrowserTab) {
         b.delegate = self
         b.presenter = presenter
+        b.downloadStore = downloadStore
     }
 
     /// Push the latest agent state into every open tab. Called when the

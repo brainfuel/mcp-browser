@@ -20,8 +20,15 @@ enum NavigateTool: MCPTool {
         guard !args.url.isEmpty else {
             throw RPCError(code: -32602, message: "missing `url`")
         }
-        let loaded = try host.requireActiveBrowser().navigate(to: args.url)
-        return .text("loading \(loaded?.absoluteString ?? args.url)")
+        // Fall back to spawning a tab if the focused window has none — a
+        // fresh launch with a window but no tab shouldn't refuse this call.
+        if let tab = host.activeBrowser {
+            let loaded = tab.navigate(to: args.url)
+            return .text("loading \(loaded?.absoluteString ?? args.url)")
+        }
+        let window = try host.requireActiveTabs()
+        let tab = window.newTab(url: args.url)
+        return .text("loading \(tab.currentURL?.absoluteString ?? args.url)")
     }
 }
 

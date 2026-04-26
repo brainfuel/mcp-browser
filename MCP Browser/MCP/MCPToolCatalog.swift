@@ -29,13 +29,19 @@ enum MCPToolCatalog {
         AnyMCPTool(EvalJSTool.self),
         AnyMCPTool(ScreenshotTool.self),
         AnyMCPTool(RenderHTMLTool.self),
+        AnyMCPTool(PageMetadataTool.self),
+        AnyMCPTool(EmulateTool.self),
 
         // DOM interaction
         AnyMCPTool(ClickTool.self),
+        AnyMCPTool(HoverTool.self),
         AnyMCPTool(FillTool.self),
         AnyMCPTool(SubmitTool.self),
+        AnyMCPTool(PressKeyTool.self),
+        AnyMCPTool(TypeTextTool.self),
         AnyMCPTool(WaitForTool.self),
         AnyMCPTool(ScrollTool.self),
+        AnyMCPTool(DialogTool.self),
 
         // Inspection
         AnyMCPTool(GetElementTool.self),
@@ -55,10 +61,16 @@ enum MCPToolCatalog {
         AnyMCPTool(UploadFileTool.self),
         AnyMCPTool(PDFExportTool.self),
         AnyMCPTool(NetworkLogTool.self),
+        AnyMCPTool(ConsoleLogsTool.self),
+
+        // Bookmarks
+        AnyMCPTool(ListBookmarksTool.self),
+        AnyMCPTool(OpenBookmarkFolderTool.self),
 
         // Cookies / session
         AnyMCPTool(GetCookiesTool.self),
         AnyMCPTool(SetCookieTool.self),
+        AnyMCPTool(StorageTool.self),
         AnyMCPTool(ClearSessionTool.self),
     ]
 
