@@ -87,8 +87,10 @@ enum MCPConfigPatcher {
         switch transport {
         case .stdio(let binary, let args):
             return ["command": binary.path, "args": args]
-        case .http(let url):
-            return ["type": "http", "url": url]
+        case .http(let url, let headers):
+            var entry: [String: Any] = ["type": "http", "url": url]
+            if !headers.isEmpty { entry["headers"] = headers }
+            return entry
         }
     }
 
@@ -129,8 +131,15 @@ enum MCPConfigPatcher {
         case .stdio(let binary, let args):
             lines.append("command = \(escapeTOMLString(binary.path))")
             lines.append("args = [\(args.map(escapeTOMLString).joined(separator: ", "))]")
-        case .http(let url):
+        case .http(let url, let headers):
             lines.append("url = \(escapeTOMLString(url))")
+            if !headers.isEmpty {
+                let inner = headers
+                    .sorted(by: { $0.key < $1.key })
+                    .map { "\(quoteTOMLKeyIfNeeded($0.key)) = \(escapeTOMLString($0.value))" }
+                    .joined(separator: ", ")
+                lines.append("headers = { \(inner) }")
+            }
         }
         return lines.joined(separator: "\n") + "\n"
     }

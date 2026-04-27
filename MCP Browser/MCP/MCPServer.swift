@@ -31,15 +31,29 @@ nonisolated final class MCPServer: @unchecked Sendable {
     private let tools: MCPToolRegistry
     private let queue = DispatchQueue(label: "mcp.server")
     private let onStateChange: @Sendable (LifecycleState) -> Void
+    private let tokenProvider: @Sendable () -> String
+    private let allowedHosts: Set<String>
+    private let allowedOrigins: Set<String>
 
     init(
         port: UInt16,
+        token: @escaping @Sendable () -> String,
         host: @escaping @Sendable @MainActor () -> (any MCPHost)?,
         onStateChange: @escaping @Sendable (LifecycleState) -> Void = { _ in }
     ) throws {
         self.port = port
+        self.tokenProvider = token
         self.tools = MCPToolRegistry(host: host)
         self.onStateChange = onStateChange
+        self.allowedHosts = [
+            "127.0.0.1:\(port)",
+            "localhost:\(port)"
+        ]
+        self.allowedOrigins = [
+            "http://127.0.0.1:\(port)",
+            "http://localhost:\(port)",
+            "null"
+        ]
 
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
@@ -128,7 +142,8 @@ nonisolated final class MCPServer: @unchecked Sendable {
     }
 
     private func dispatch(request: HTTPRequest, body: Data, on conn: NWConnection) {
-        // Health probe for humans hitting the URL.
+        // Health probe for humans hitting the URL — unauthenticated by
+        // design so a quick `curl http://127.0.0.1:8833/` still works.
         if request.method == "GET" && request.path == "/" {
             write(status: 200, body: "MCP Browser is running. POST JSON-RPC to /mcp\n", on: conn)
             return

@@ -14,7 +14,7 @@ import Foundation
 /// http points the client at a loopback URL the host app already serves.
 enum MCPTransport: Sendable, Hashable {
     case stdio(binary: URL, args: [String])
-    case http(url: String)
+    case http(url: String, headers: [String: String] = [:])
 }
 
 /// What we register: a name (the key under `mcpServers`) and how to reach it.

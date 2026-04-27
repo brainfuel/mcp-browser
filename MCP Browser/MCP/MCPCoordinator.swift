@@ -103,6 +103,7 @@ final class MCPCoordinator: MCPHost {
         do {
             let s = try MCPServer(
                 port: Self.defaultPort,
+                token: { MCPSecret.token },
                 host: { [weak self] in self },
                 onStateChange: { [weak self] state in
                     Task { @MainActor [weak self] in
