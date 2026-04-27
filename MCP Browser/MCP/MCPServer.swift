@@ -219,6 +219,8 @@ nonisolated final class MCPServer: @unchecked Sendable {
         switch status {
         case 200: reason = "OK"
         case 400: reason = "Bad Request"
+        case 401: reason = "Unauthorized"
+        case 403: reason = "Forbidden"
         case 404: reason = "Not Found"
         default:  reason = "Error"
         }

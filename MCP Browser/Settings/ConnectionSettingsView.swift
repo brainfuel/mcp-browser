@@ -16,19 +16,72 @@ struct ConnectionSettingsView: View {
     let endpoint: String
 
     @State private var registrar: any MCPRegistrar = MCPRegistrarFactory.makeDefault()
+    @State private var tokenRevealed = false
+    @State private var tokenVersion = 0   // bumped to force view refresh after regen
 
     private var spec: MCPServerSpec {
-        MCPServerSpec(name: "mcp-browser", transport: .http(url: endpoint))
+        MCPServerSpec(
+            name: "mcp-browser",
+            transport: .http(
+                url: endpoint,
+                headers: ["Authorization": "Bearer \(MCPSecret.token)"]
+            )
+        )
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 serverSection
+                tokenSection
                 clientsSection
             }
             .padding(8)
         }
+    }
+
+    // MARK: - Token section
+
+    private var tokenSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("ACCESS TOKEN")
+            Text("Clients must send this token in an `Authorization: Bearer …` header. Registering a client through the buttons below writes it for you. Regenerate to revoke access for every client at once.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text(tokenRevealed ? MCPSecret.token : String(repeating: "•", count: 24))
+                    .font(.system(.body, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .id(tokenVersion)
+                Spacer()
+                Button(tokenRevealed ? "Hide" : "Reveal") {
+                    tokenRevealed.toggle()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button {
+                    copy(MCPSecret.token)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button("Regenerate") {
+                    MCPSecret.regenerate()
+                    tokenVersion &+= 1
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
     }
 
     // MARK: - Server section
