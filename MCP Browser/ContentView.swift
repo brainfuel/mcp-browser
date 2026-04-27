@@ -275,30 +275,53 @@ private struct URLBarField: View {
 
 // MARK: - Tab strip
 
-/// The horizontal row of tab chips shown when more than one tab is
-/// open. Pure presentation: gets `BrowserWindow` for state and two
-/// callbacks for switch/close.
+/// Safari-style horizontal tab strip: equal-width pills that share
+/// the available width, with an elevated active tab and hairline
+/// separators between adjacent inactive tabs. Pure presentation —
+/// gets `BrowserWindow` for state and switch/close callbacks.
 private struct TabBarStrip: View {
     let window: BrowserWindow
     let onSwitch: (UUID) -> Void
     let onClose:  (UUID) -> Void
 
+    @State private var hoveredID: UUID? = nil
+
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(window.tabs) { tab in
-                TabChip(
-                    tab: tab,
-                    isActive: tab.id == window.activeID,
-                    canClose: window.tabs.count > 1,
-                    onSwitch: { onSwitch(tab.id) },
-                    onClose:  { onClose(tab.id) }
-                )
+        HStack(spacing: 0) {
+            ForEach(Array(window.tabs.enumerated()), id: \.element.id) { index, tab in
+                let isActive = tab.id == window.activeID
+                let isHovered = tab.id == hoveredID
+                let prevActive = index > 0 && window.tabs[index - 1].id == window.activeID
+                let prevHovered = index > 0 && window.tabs[index - 1].id == hoveredID
+                // Hide the leading separator when the tab on either
+                // side is highlighted (active or hovered) — matches Safari.
+                let showLeadingSeparator = index > 0 &&
+                    !isActive && !isHovered && !prevActive && !prevHovered
+
+                ZStack(alignment: .leading) {
+                    if showLeadingSeparator {
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.25))
+                            .frame(width: 1, height: 16)
+                    }
+                    TabChip(
+                        tab: tab,
+                        isActive: isActive,
+                        isHovered: isHovered,
+                        canClose: window.tabs.count > 1,
+                        onSwitch: { onSwitch(tab.id) },
+                        onClose:  { onClose(tab.id) }
+                    )
+                    .onHover { inside in
+                        hoveredID = inside ? tab.id : (hoveredID == tab.id ? nil : hoveredID)
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.vertical, 6)
+        .frame(height: 36)
         .background(.regularMaterial)
     }
 }
@@ -306,39 +329,82 @@ private struct TabBarStrip: View {
 private struct TabChip: View {
     let tab: BrowserTab
     let isActive: Bool
+    let isHovered: Bool
     let canClose: Bool
     let onSwitch: () -> Void
     let onClose:  () -> Void
 
     var body: some View {
         let label = tab.pageTitle.isEmpty ? (tab.currentURL?.host ?? "New Tab") : tab.pageTitle
+        let urlString = tab.currentURL?.absoluteString ?? ""
 
-        HStack(spacing: 6) {
-            Button(action: onSwitch) {
+        Button(action: onSwitch) {
+            HStack(spacing: 6) {
+                // Favicon (placeholder when no URL yet)
+                Group {
+                    if urlString.isEmpty {
+                        Image(systemName: "globe")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        FaviconImage(urlString: urlString, size: 14)
+                    }
+                }
+                .frame(width: 14, height: 14)
+
                 Text(label)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 180, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                    .foregroundStyle(isActive ? .primary : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-            if canClose {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
+                // Close button: visible on hover or when active.
+                if canClose && (isHovered || isActive) {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, height: 14)
+                            .background(
+                                Circle().fill(Color.secondary.opacity(0.001))
+                            )
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close tab")
+                } else {
+                    // Reserve space so the title doesn't shift on hover.
+                    Color.clear.frame(width: 14, height: 14)
                 }
-                .buttonStyle(.plain)
-                .help("Close tab")
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .contentShape(RoundedRectangle(cornerRadius: 7))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08))
-        )
+        .buttonStyle(.plain)
+        .background(chipBackground)
+        .padding(.horizontal, 1)
+    }
+
+    @ViewBuilder
+    private var chipBackground: some View {
+        if isActive {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(.thickMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.10), radius: 2, y: 1)
+        } else if isHovered {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(0.06))
+        } else {
+            Color.clear
+        }
     }
 }
 

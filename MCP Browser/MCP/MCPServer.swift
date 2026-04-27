@@ -138,10 +138,59 @@ nonisolated final class MCPServer: @unchecked Sendable {
             return
         }
 
+        // DNS-rebinding defence: even though we're bound to loopback, a
+        // malicious page could resolve attacker.com → 127.0.0.1 and
+        // POST from JS. Require Host (and Origin, when present) to be
+        // an explicit loopback name.
+        let hostHeader = (request.headers["host"] ?? "").lowercased()
+        if !allowedHosts.contains(hostHeader) {
+            write(status: 403, body: "forbidden host\n", on: conn)
+            return
+        }
+        if let origin = request.headers["origin"]?.lowercased(),
+           !origin.isEmpty,
+           !allowedOrigins.contains(origin) {
+            write(status: 403, body: "forbidden origin\n", on: conn)
+            return
+        }
+
+        // Bearer-token auth. Constant-time-ish compare (matches lengths
+        // first, then equates byte-by-byte) — the token is opaque so
+        // timing attacks aren't really in scope, but cheap to do right.
+        guard let presented = bearerToken(in: request.headers["authorization"]),
+              tokensMatch(presented, tokenProvider()) else {
+            var head = "HTTP/1.1 401 Unauthorized\r\n"
+            head += "WWW-Authenticate: Bearer\r\n"
+            head += "Content-Type: text/plain; charset=utf-8\r\n"
+            head += "Content-Length: 13\r\n"
+            head += "Connection: close\r\n\r\n"
+            head += "unauthorized\n"
+            conn.send(content: Data(head.utf8), completion: .contentProcessed { _ in
+                conn.cancel()
+            })
+            return
+        }
+
         Task.detached { [tools] in
             let responseJSON = await tools.handle(jsonRPCBody: body)
             self.write(status: 200, contentType: "application/json", body: responseJSON, on: conn)
         }
+    }
+
+    private func bearerToken(in header: String?) -> String? {
+        guard let header else { return nil }
+        let trimmed = header.trimmingCharacters(in: .whitespaces)
+        let prefix = "bearer "
+        guard trimmed.lowercased().hasPrefix(prefix) else { return nil }
+        return String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+    }
+
+    private func tokensMatch(_ a: String, _ b: String) -> Bool {
+        let ab = Array(a.utf8), bb = Array(b.utf8)
+        guard ab.count == bb.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<ab.count { diff |= (ab[i] ^ bb[i]) }
+        return diff == 0
     }
 
     // MARK: - HTTP response helpers
