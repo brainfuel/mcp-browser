@@ -16,8 +16,6 @@ After downloading, open the DMG and drag **MCP Browser** to your Applications fo
 
 ![MCP Browser tools and settings](docs/images/screenshot2.png)
 
-> Drop your own screenshots into `docs/images/` and update the filenames above.
-
 ## Why
 
 Most "browser-as-a-tool" stories for agents fall into two camps:
