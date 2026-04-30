@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.brainfuel/mcp-browser",
+  "title": "MCP Browser",
+  "description": "Native macOS browser exposing an MCP server so AI agents can drive a real WKWebView.",
+  "version": "1.0.1",
+  "websiteUrl": "https://github.com/brainfuel/mcp-browser",
+  "repository": {
+    "url": "https://github.com/brainfuel/mcp-browser",
+    "source": "github",
+    "id": "1222936976"
+  },
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "install": {
+        "type": "macos-app",
+        "downloadUrl": "https://github.com/brainfuel/mcp-browser/releases/latest",
+        "instructions": "Download the signed DMG for Apple Silicon, drag MCP Browser to /Applications, launch it, then copy the bearer token and endpoint URL from Settings -> Connection. Configure your MCP client to POST JSON-RPC to http://127.0.0.1:8833/mcp with header Authorization: Bearer <token>. The Settings -> MCP Clients tab can patch the config for Claude Desktop and Codex automatically.",
+        "platform": "macOS 14+ (Apple Silicon)",
+        "transport": "streamable-http",
+        "endpointUrl": "http://127.0.0.1:8833/mcp",
+        "auth": "bearer-token (per-launch, regeneratable from Settings)"
+      }
+    }
+  }
+}
