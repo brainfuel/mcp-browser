@@ -48,6 +48,7 @@ enum MCPToolCatalog {
         AnyMCPTool(ListLinksTool.self),
         AnyMCPTool(ListFormsTool.self),
         AnyMCPTool(AccessibilityTreeTool.self),
+        AnyMCPTool(InspectPageTool.self),
         AnyMCPTool(FindInPageTool.self),
 
         // Tabs
