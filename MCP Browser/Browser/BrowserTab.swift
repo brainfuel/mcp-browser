@@ -45,6 +45,15 @@ final class BrowserTab: NSObject, Identifiable {
     var canGoForward: Bool = false
     var estimatedProgress: Double = 0
 
+    /// Accessibility-quality summary for the current page. Recomputed
+    /// when a navigation finishes loading and surfaced by the URL-bar
+    /// indicator. Nil while the page is loading or before a first score.
+    var accessibilitySummary: InspectPageTool.Summary?
+
+    /// `@AppStorage` key for the URL-bar accessibility indicator toggle.
+    /// Default behavior (when the key is absent) is on.
+    static let showAccessibilityIndicatorKey = "showAccessibilityIndicator"
+
     // MARK: - Hibernation
 
     /// True when the tab's WebContent process has been released. A tiny
@@ -177,6 +186,7 @@ final class BrowserTab: NSObject, Identifiable {
         self.webView = WKWebView(frame: .zero)
         self.isLoading = false
         self.estimatedProgress = 0
+        self.accessibilitySummary = nil
         isHibernated = true
     }
 
@@ -213,7 +223,19 @@ final class BrowserTab: NSObject, Identifiable {
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in
                 let value = wv.isLoading
-                Task { @MainActor in self?.isLoading = value }
+                let hasURL = wv.url != nil
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.isLoading = value
+                    if value {
+                        // Loading started: clear the stale indicator so
+                        // the URL-bar dot disappears until the new page
+                        // settles and we recompute.
+                        self.accessibilitySummary = nil
+                    } else if hasURL && !self.isHibernated {
+                        await self.recomputeAccessibilitySummary()
+                    }
+                }
             },
             webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
                 let value = wv.canGoBack
@@ -228,6 +250,21 @@ final class BrowserTab: NSObject, Identifiable {
                 Task { @MainActor in self?.estimatedProgress = value }
             },
         ]
+    }
+
+    // MARK: - Accessibility scoring
+
+    /// Walk a fresh accessibility tree for the current page and update
+    /// `accessibilitySummary`. Called from the `isLoading` KVO when a
+    /// navigation settles; failures (script errors, dead web view) leave
+    /// the summary cleared rather than poisoning it with stale state.
+    func recomputeAccessibilitySummary() async {
+        do {
+            let tree = try await accessibilityTree(maxDepth: 20, maxNodes: 2000)
+            self.accessibilitySummary = InspectPageTool.score(tree: tree)
+        } catch {
+            self.accessibilitySummary = nil
+        }
     }
 
     // MARK: - Navigation

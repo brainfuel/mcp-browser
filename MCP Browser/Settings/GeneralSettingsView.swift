@@ -15,6 +15,7 @@ struct GeneralSettingsView: View {
     @AppStorage(BrowserWindow.hibernateAfterMinutesKey) private var hibernateAfterMinutes: Int = 0
     @AppStorage(SearchEngine.storageKey) private var searchEngineRaw: String = SearchEngine.google.rawValue
     @AppStorage(SearchEngine.customTemplateKey) private var customSearchTemplate: String = ""
+    @AppStorage(BrowserTab.showAccessibilityIndicatorKey) private var showA11yIndicator: Bool = true
 
     var body: some View {
         ScrollView {
@@ -22,6 +23,7 @@ struct GeneralSettingsView: View {
                 searchCard
                 historyCard
                 tabsCard
+                accessibilityCard
             }
             .padding(2)
         }
@@ -73,6 +75,28 @@ struct GeneralSettingsView: View {
             Text("Hibernated tabs release their web content process and reload from a saved session when you switch back. Saves memory at the cost of a brief reload.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08))
+        )
+    }
+
+    private var accessibilityCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Accessibility")
+                .font(.headline)
+
+            Toggle(isOn: $showA11yIndicator) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Warn when a page is hard for agents to drive")
+                    Text("Shows a slim banner under the address bar when the current page has weak (amber) or poor (red) accessibility markup. Pages with strong markup show no banner. AI agents — and screen readers — work much better on pages with proper roles and labels, so this is a quick signal of how reliably an agent will be able to drive a site. Hover the banner for the underlying score.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
         }
         .padding(14)
         .background(

@@ -99,3 +99,6 @@ Secrets.swift
 dist/
 *.profraw
 release.command
+
+# Local launch tracker (private — contact info, handles)
+LAUNCH.md

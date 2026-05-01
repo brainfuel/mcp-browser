@@ -42,6 +42,8 @@ struct ContentView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
+            AccessibilityWarningBar(summary: vm.browser?.accessibilitySummary)
+
             WebViewHost()
                 .frame(minWidth: 800, minHeight: 520)
                 .overlay(alignment: .topTrailing) {
@@ -56,6 +58,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.18), value: vm.bookmarksBarVisible)
         .animation(.easeInOut(duration: 0.18), value: vm.hasMultipleTabs)
+        .animation(.easeInOut(duration: 0.22), value: vm.browser?.accessibilitySummary?.score)
         .frame(minWidth: 960, minHeight: 600)
         .overlay(alignment: .top) {
             if !vm.suggestions.isEmpty {
@@ -270,6 +273,74 @@ private struct URLBarField: View {
                 .draggable(PageDragPayload(title: title, url: urlString))
                 .help("Drag to bookmark this page")
         }
+    }
+}
+
+// MARK: - Accessibility warning bar
+
+/// Slim banner shown beneath the chrome whenever the current page's
+/// accessibility score is weak (amber) or poor (red). On `good` pages
+/// — and when the user has switched the indicator off in Settings —
+/// it stays hidden, taking no vertical space. Animates in/out so a
+/// transition between sites doesn't feel abrupt.
+private struct AccessibilityWarningBar: View {
+    let summary: InspectPageTool.Summary?
+
+    @AppStorage(BrowserTab.showAccessibilityIndicatorKey)
+    private var showA11yIndicator: Bool = true
+
+    var body: some View {
+        // Show only when: setting is on, we have a summary, and the
+        // score warrants a warning. Everything else collapses to nothing.
+        if showA11yIndicator,
+           let summary,
+           summary.score == "weak" || summary.score == "poor" {
+            HStack(spacing: 8) {
+                Image(systemName: summary.score == "poor"
+                      ? "exclamationmark.triangle.fill"
+                      : "exclamationmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Text(message(for: summary))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background(for: summary.score))
+            .help(tooltip(for: summary))
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func message(for summary: InspectPageTool.Summary) -> String {
+        let prefix = summary.score == "poor"
+            ? "Poor accessibility — AI agents will struggle to drive this page reliably"
+            : "Weak accessibility — AI agents may need to fall back to vision"
+        let detail = summary.reasons.first.map { " · \($0)" } ?? ""
+        return prefix + detail
+    }
+
+    private func background(for score: String) -> some View {
+        switch score {
+        case "poor":
+            return Color(nsColor: .systemRed).opacity(0.85)
+        default: // "weak"
+            return Color(nsColor: .systemOrange).opacity(0.85)
+        }
+    }
+
+    private func tooltip(for summary: InspectPageTool.Summary) -> String {
+        let label  = "Accessibility: \(summary.score.capitalized)"
+        let detail = summary.reasons.joined(separator: "\n")
+        let blurb  = "AI agents work better on pages with proper semantic markup. This score reflects how reliably an agent can drive this page."
+        return [label, detail, blurb].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }
 
