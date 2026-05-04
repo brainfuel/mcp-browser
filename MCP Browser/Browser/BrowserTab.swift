@@ -54,6 +54,10 @@ final class BrowserTab: NSObject, Identifiable {
     /// Default behavior (when the key is absent) is on.
     static let showAccessibilityIndicatorKey = "showAccessibilityIndicator"
 
+    /// `@AppStorage` key for the cookie consent policy (raw value of
+    /// `CookieConsentPolicy`). Default when missing is "decline_optional".
+    static let cookieConsentPolicyKey = "cookieConsentPolicy"
+
     // MARK: - Hibernation
 
     /// True when the tab's WebContent process has been released. A tiny
@@ -143,7 +147,8 @@ final class BrowserTab: NSObject, Identifiable {
         for source in [BrowserScripts.networkLog,
                        BrowserScripts.consoleLog,
                        BrowserScripts.sensitiveSubmit,
-                       BrowserScripts.recorder] {
+                       BrowserScripts.recorder,
+                       CookieConsentScripts.consentJS] {
             config.userContentController.addUserScript(WKUserScript(
                 source: source,
                 injectionTime: .atDocumentStart,
@@ -252,6 +257,49 @@ final class BrowserTab: NSObject, Identifiable {
         ]
     }
 
+    // MARK: - Cookie consent
+
+    /// Read the current policy from defaults and (a) inject our hide
+    /// stylesheet if the policy says so and (b) kick the click-based
+    /// rules with the right action token. Called from `didCommit` so
+    /// changes to the setting take effect on the next navigation.
+    private func applyCookieConsentPolicy() {
+        let raw = UserDefaults.standard.string(forKey: Self.cookieConsentPolicyKey)
+            ?? CookieConsentPolicy.declineOptional.rawValue
+        let policy = CookieConsentPolicy(rawValue: raw) ?? .declineOptional
+        guard policy != .off else { return }
+
+        if policy.hidesViaCSS {
+            // Inject the hide stylesheet into the page's own document
+            // so SPA route changes don't lose it. Idempotent — re-runs
+            // on every navigation but skip if already inserted.
+            let cssLiteral = BrowserScripts.quote(CookieConsentScripts.hideCSS)
+            let hideJS = """
+            (function(){
+              if (document.getElementById('__mcpConsentHide')) return;
+              const s = document.createElement('style');
+              s.id = '__mcpConsentHide';
+              s.textContent = \(cssLiteral);
+              (document.head || document.documentElement).appendChild(s);
+            })();
+            """
+            Task { try? await self.runJS(hideJS) }
+        }
+
+        if policy.runsClickLayer {
+            // The user script defined `__mcpConsent.run` at documentStart.
+            // Kick the polling loop with our action token.
+            let action = policy.jsActionToken
+            let runStmt = """
+            (function(){
+              try { window.__mcpConsent && window.__mcpConsent.run('\(action)'); }
+              catch(_) {}
+            })();
+            """
+            Task { try? await self.runJS(runStmt) }
+        }
+    }
+
     // MARK: - Accessibility scoring
 
     /// Walk a fresh accessibility tree for the current page and update
@@ -344,32 +392,34 @@ final class BrowserTab: NSObject, Identifiable {
     /// position. Cross-origin frames are skipped silently.
     enum ReadTextMode: String { case visible, all }
 
-    func readText(mode: ReadTextMode = .visible) async throws -> String {
-        let metricsJS = """
-        ({
-          x: window.scrollX, y: window.scrollY,
-          h: Math.max(
-            document.body ? document.body.scrollHeight : 0,
-            document.documentElement ? document.documentElement.scrollHeight : 0
-          ),
-          step: Math.max(window.innerHeight || 800, 400)
-        })
-        """
-        if let metrics = try await runJS(metricsJS) as? [String: Any],
-           let height = (metrics["h"] as? NSNumber)?.doubleValue,
-           let step = (metrics["step"] as? NSNumber)?.doubleValue,
-           height > 0, step > 0 {
-            let origX = (metrics["x"] as? NSNumber)?.doubleValue ?? 0
-            let origY = (metrics["y"] as? NSNumber)?.doubleValue ?? 0
-            var y = 0.0
-            while y < height {
-                _ = try? await runJS("window.scrollTo(0, \(y))")
-                try? await Task.sleep(nanoseconds: 60_000_000)
-                y += step
+    func readText(mode: ReadTextMode = .visible, triggerLazyLoad: Bool = true) async throws -> String {
+        if triggerLazyLoad {
+            let metricsJS = """
+            ({
+              x: window.scrollX, y: window.scrollY,
+              h: Math.max(
+                document.body ? document.body.scrollHeight : 0,
+                document.documentElement ? document.documentElement.scrollHeight : 0
+              ),
+              step: Math.max(window.innerHeight || 800, 400)
+            })
+            """
+            if let metrics = try await runJS(metricsJS) as? [String: Any],
+               let height = (metrics["h"] as? NSNumber)?.doubleValue,
+               let step = (metrics["step"] as? NSNumber)?.doubleValue,
+               height > 0, step > 0 {
+                let origX = (metrics["x"] as? NSNumber)?.doubleValue ?? 0
+                let origY = (metrics["y"] as? NSNumber)?.doubleValue ?? 0
+                var y = 0.0
+                while y < height {
+                    _ = try? await runJS("window.scrollTo(0, \(y))")
+                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    y += step
+                }
+                _ = try? await runJS("window.scrollTo(0, \(height))")
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                _ = try? await runJS("window.scrollTo(\(origX), \(origY))")
             }
-            _ = try? await runJS("window.scrollTo(0, \(height))")
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            _ = try? await runJS("window.scrollTo(\(origX), \(origY))")
         }
 
         let visibleJS = """
