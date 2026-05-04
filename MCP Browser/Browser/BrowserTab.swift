@@ -673,6 +673,7 @@ extension BrowserTab: WKNavigationDelegate {
         applyAgentStateToPage()
         applyRecordingStateToPage()
         applySavedZoom(host: webView.url?.host)
+        applyCookieConsentPolicy()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
