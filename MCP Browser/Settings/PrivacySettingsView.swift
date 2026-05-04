@@ -23,14 +23,53 @@ struct PrivacySettingsView: View {
     @State private var lastMessage: String?
     @State private var showingConfirm = false
 
+    @AppStorage(BrowserTab.cookieConsentPolicyKey)
+    private var cookieConsentRaw: String = CookieConsentPolicy.declineOptional.rawValue
+
+    private var cookieConsentPolicy: Binding<CookieConsentPolicy> {
+        Binding(
+            get: { CookieConsentPolicy(rawValue: cookieConsentRaw) ?? .declineOptional },
+            set: { cookieConsentRaw = $0.rawValue }
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                cookieConsentCard
                 clearCard
                 noteCard
             }
             .padding(2)
         }
+    }
+
+    private var cookieConsentCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Cookie Banners")
+                .font(.headline)
+
+            Picker("Default action", selection: cookieConsentPolicy) {
+                ForEach(CookieConsentPolicy.allCases) { policy in
+                    Text(policy.label).tag(policy)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Text(cookieConsentPolicy.wrappedValue.help)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Applies on the next navigation. Already-loaded pages aren't retroactively cleaned.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08))
+        )
     }
 
     private var clearCard: some View {
