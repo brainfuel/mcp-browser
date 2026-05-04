@@ -211,7 +211,7 @@ extension BrowserWindow: BrowserTabDelegate {
         // get whatever was there first.
         Task { @MainActor [weak history, weak model] in
             guard let history, let model else { return }
-            if let text = try? await model.readText(), !text.isEmpty {
+            if let text = try? await model.readText(triggerLazyLoad: false), !text.isEmpty {
                 history.updateSnippet(url: url, snippet: text)
             }
         }
